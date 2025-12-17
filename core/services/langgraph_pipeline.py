@@ -8,41 +8,12 @@ from core.services.rag_client import RAGClient, RAGClientError
 from core.models import ChatSession, ChatMessage
 from asgiref.sync import sync_to_async
 from django.utils import timezone
+from core import messages
 
 MAX_HISTORY = int(os.getenv("CHAT_MAX_HISTORY", "8"))
 TOP_K = int(os.getenv("RAG_TOP_K", "5"))
 TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
 MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/auto")
-
-SYSTEM_PROMPT = """**1. Identity and Goal:**
-You are "Sharif Study Buddy," a friendly and expert AI assistant for students of Sharif University of Technology. Your primary goal is to provide accurate answers based on the university's official documents.
-
-**2. Core Instructions:**
-
-*   **Language:** **CRITICAL: You MUST respond in PERSIAN (FARSI) at all times.** This is your most important rule. All greetings, answers, and citations must be in Persian.
-*   **Tone:** Be friendly, helpful, and warm, like a knowledgeable classmate. Use the informal "تو" for a conversational feel. Start with a friendly greeting (e.g., "سلام! حتما کمکت می‌کنم.").
-*   **Knowledge Source:** Your answers **must** be based *only* on the information provided in the "Retrieved Documents" context. Do not use external knowledge for university-related questions.
-*   **Citing Sources:**
-    *   You **must** cite a source if, and only if, you use its information in your answer.
-    *   If you use any sources, add a "📚 منابع:" section at the very end of your response.
-    *   Use this exact HTML format for citations with a URL: `<a href="Full URL">Document Title</a>`.
-    *   **If a document has a title but no URL**, cite it by making the title bold: `**Document Title**`.
-    *   The "Document Title" is provided in the context under `📄 عنوان:`.
-    *   **If you do not use any documents, do not include the "منابع" section.**
-*   **Handling Missing Information:** If the context does not contain the answer, state it clearly (e.g., "متاسفانه اطلاعاتی در این مورد پیدا نکردم...") and suggest an alternative, like contacting the relevant university department (e.g., "بهتره از آموزش دانشکده بپرسی").
-*   **Out-of-Scope Questions:** For non-university questions, politely state that it's outside your scope (e.g., "این سوال خارج از حوزه دانشگاه شریفه...") and provide a brief, general answer if possible, clarifying it's not from official documents.
-
-**3. Example of a Perfect Response:**
-
-"سلام! خوشحالم که می‌تونم کمکت کنم 😊
-
-بر اساس آیین‌نامه دانشگاه، استفاده از ابزارهای هوش مصنوعی در تکالیف و امتحانات باید با اجازه استاد باشه. این موضوع برای اطمینان از اصالت کار دانشجوها خیلی مهمه.
-
-اگه سوال دیگه‌ای داری، حتما بپرس!
-
-📚 منابع:
-<a href="https://ac.sharif.edu/rules/ai-ethics">آیین‌نامه استفاده از ابزار هوش مصنوعی</a>"
-"""
 
 
 class GraphState(TypedDict):
@@ -108,57 +79,60 @@ async def retrieve_node(state: GraphState) -> GraphState:
 
             # Title
             if title:
-                snippet_parts.append(f"📄 عنوان: {title}")
+                snippet_parts.append(
+                    messages.RAG_DOCUMENT_TITLE.format(title=title))
 
             # Source name
             if source_name:
-                snippet_parts.append(f"🏷️ منبع دانش: {source_name}")
+                snippet_parts.append(
+                    messages.RAG_KNOWLEDGE_SOURCE.format(source_name=source_name))
 
             # File info
-            file_info_bits = []
-            if file_name:
-                file_info_bits.append(f"نام فایل: {file_name}")
-            if file_path:
-                file_info_bits.append(f"مسیر: {file_path}")
-            if page:
-                file_info_bits.append(f"صفحه: {page}")
-            if file_info_bits:
-                snippet_parts.append("📁 " + " | ".join(file_info_bits))
+            if any([file_name, file_path, page]):
+                file_info_str = messages.RAG_FILE_INFO.format(
+                    file_name=file_name or "N/A",
+                    file_path=file_path or "N/A",
+                    page=page or "N/A"
+                ).replace(" | N/A", "").replace("N/A | ", "").replace("N/A", "")
+                snippet_parts.append(file_info_str)
 
             # Score (rounded)
             if score is not None:
                 try:
-                    snippet_parts.append(f"⭐ امتیاز: {float(score):.3f}")
-                except Exception:
-                    snippet_parts.append(f"⭐ امتیاز: {score}")
+                    snippet_parts.append(
+                        messages.RAG_SCORE.format(score=float(score)))
+                except (ValueError, TypeError):
+                    snippet_parts.append(
+                        messages.RAG_SCORE_RAW.format(score=score))
 
             # Owner info (optional)
             if owner_user_id:
-                snippet_parts.append(f"👤 مالک سند: {owner_user_id}")
+                snippet_parts.append(messages.RAG_OWNER.format(
+                    owner_user_id=owner_user_id))
 
             # Content
-            snippet_parts.append(f"📝 محتوا:\n{text}")
+            snippet_parts.append(messages.RAG_CONTENT.format(text=text))
 
             # URL
             if source_url:
-                # Store full URL in context (we'll format it for display in post-processing)
-                snippet_parts.append(f"🔗 منبع: {source_url}")
+                snippet_parts.append(
+                    messages.RAG_SOURCE_URL.format(source_url=source_url))
             else:
-                snippet_parts.append("🔗 منبع: سند داخلی دانشگاه")
+                snippet_parts.append(messages.RAG_SOURCE_INTERNAL)
 
             snippets.append("\n".join(snippet_parts))
 
     except RAGClientError as e:
-        snippets.append(f"⚠️ هشدار: سرویس RAG در دسترس نبود: {e}")
+        snippets.append(messages.RAG_SERVICE_UNAVAILABLE.format(error=e))
 
     # Format context with clear separation between documents
     if snippets:
-        context = "\n\n" + "=" * 50 + "\n\n".join(
-            [f"📚 سند {idx}:\n{snippet}" for idx,
+        context = messages.RAG_CONTEXT_HEADER + "\n\n".join(
+            [messages.RAG_DOCUMENT_WRAPPER.format(index=idx, snippet=snippet) for idx,
                 snippet in enumerate(snippets, 1)]
-        ) + "\n\n" + "=" * 50
+        ) + messages.RAG_CONTEXT_HEADER.strip()
     else:
-        context = "⚠️ هیچ سند مرتبطی یافت نشد."
+        context = messages.RAG_NO_DOCUMENTS_FOUND
 
     state["context"] = context
     state.setdefault("debug", {}).update(debug)
@@ -168,7 +142,7 @@ async def retrieve_node(state: GraphState) -> GraphState:
 async def generate_node(state: GraphState) -> GraphState:
     api_key = settings.OPENROUTER_API_KEY or os.getenv("OPENROUTER_API_KEY")
     if not api_key:
-        raise RuntimeError("OPENROUTER_API_KEY is not configured")
+        raise RuntimeError(messages.OPENROUTER_API_KEY_ERROR)
 
     llm = OpenRouterLLM(
         api_key=api_key,
@@ -182,22 +156,15 @@ async def generate_node(state: GraphState) -> GraphState:
     # Build context section with clear formatting
     context = state.get("context", "")
     context_section = ""
-    if context and context != "⚠️ هیچ سند مرتبطی یافت نشد.":
-        context_section = f"""
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-📚 اطلاعات بازیابی‌شده از اسناد دانشگاه:
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-{context}
-
-**Retrieved Documents:**
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-"""
+    if context and context != messages.RAG_NO_DOCUMENTS_FOUND:
+        context_section = messages.GENERATION_CONTEXT_HEADER.format(
+            context=context)
     else:
-        context_section = "\n⚠️ No relevant documents were found in the knowledge base. In this case, if you have general information, respond while noting that this information is not from university documents.\n**Remember: Always respond in Persian (Farsi).**\n"
+        context_section = messages.GENERATION_NO_CONTEXT_FALLBACK
 
     messages.append({
         "role": "system",
-        "content": SYSTEM_PROMPT + context_section
+        "content": messages.SYSTEM_PROMPT + context_section
     })
     messages.extend(state.get("history", []))
     messages.append({"role": "user", "content": state["question"]})
@@ -220,7 +187,7 @@ def _convert_sources_to_html_links(answer: str, context: str) -> str:
     import re
 
     # Check if answer already has properly formatted HTML links with sources section
-    if '<a href=' in answer and '📚 منابع:' in answer:
+    if '<a href=' in answer and messages.CITATION_SOURCES_SECTION in answer:
         # Verify links are properly formatted, if yes, return as is
         if re.search(r'<a href="https?://[^"]+">[^<]+</a>', answer):
             return answer
@@ -230,18 +197,18 @@ def _convert_sources_to_html_links(answer: str, context: str) -> str:
     sources = []
 
     # Split context by document separators
-    doc_sections = re.split(r'📚 سند \d+:', context)
+    doc_sections = re.split(messages.REGEX_DOC_SEPARATOR_PATTERN, context)
 
     for section in doc_sections:
         if not section.strip():
             continue
 
         # Extract title (this is the actual document title from metadata)
-        title_match = re.search(r'📄 عنوان:\s*([^\n]+)', section)
+        title_match = re.search(messages.REGEX_TITLE_PATTERN, section)
         title = title_match.group(1).strip() if title_match else None
 
         # Extract URL
-        url_match = re.search(r'🔗 منبع:\s*(https?://[^\s\n]+)', section)
+        url_match = re.search(messages.REGEX_URL_PATTERN, section)
         url = url_match.group(1).strip() if url_match else None
 
         # Only add if we have both URL and title
@@ -268,7 +235,7 @@ def _convert_sources_to_html_links(answer: str, context: str) -> str:
 
     # Remove any existing source section (text or partial HTML) to replace with formatted version
     # Remove text-based source sections
-    answer = re.sub(r'\n\n?📚 منابع?:?\s*\n.*?(?=\n\n|\Z)',
+    answer = re.sub(r'\n\n?{}:?\s*\n.*?(?=\n\n|\Z)'.format(re.escape(messages.CITATION_SOURCES_SECTION)),
                     '', answer, flags=re.DOTALL)
     # Remove markdown-style source references at the end
     answer = re.sub(r'\n\n?\[منبع[^\]]+\]\s*$', '', answer, flags=re.MULTILINE)
@@ -291,14 +258,15 @@ def _convert_sources_to_html_links(answer: str, context: str) -> str:
     # Add a formatted source list at the end only if the LLM's answer contains references.
     # This respects the LLM's decision on which sources are relevant.
     has_references = re.search(
-        source_ref_pattern, answer) or re.search(r'📚 منابع:', answer)
+        source_ref_pattern, answer) or re.search(re.escape(messages.CITATION_SOURCES_SECTION), answer)
 
     if has_references:
         # Ensure a clean slate by removing any partial/text-based source list
-        answer = re.sub(r'\n\n?📚 منابع?:?.*', '', answer, flags=re.DOTALL)
+        answer = re.sub(
+            r'\n\n?{}:?.*'.format(re.escape(messages.CITATION_SOURCES_SECTION)), '', answer, flags=re.DOTALL)
 
         # Build the HTML source list
-        sources_html = '\n\n📚 منابع:\n' + '\n'.join([
+        sources_html = f'\n\n{messages.CITATION_SOURCES_SECTION}\n' + '\n'.join([
             f'<a href="{url}">{title}</a>' for url, title in sources
         ])
         answer = answer.rstrip() + sources_html

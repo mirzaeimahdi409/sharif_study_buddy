@@ -151,7 +151,7 @@ async def generate_node(state: GraphState) -> GraphState:
         streaming=False,
     )
 
-    messages: List[Dict[str, str]] = []
+    llm_messages: List[Dict[str, str]] = []
 
     # Build context section with clear formatting
     context = state.get("context", "")
@@ -162,13 +162,13 @@ async def generate_node(state: GraphState) -> GraphState:
     else:
         context_section = messages.GENERATION_NO_CONTEXT_FALLBACK
 
-    messages.append({
+    llm_messages.append({
         "role": "system",
         "content": messages.SYSTEM_PROMPT + context_section
     })
-    messages.extend(state.get("history", []))
-    messages.append({"role": "user", "content": state["question"]})
-    response = await llm.ainvoke(messages)
+    llm_messages.extend(state.get("history", []))
+    llm_messages.append({"role": "user", "content": state["question"]})
+    response = await llm.ainvoke(llm_messages)
     answer = response.content
 
     # Post-process: Convert source references to clickable HTML links if not already formatted

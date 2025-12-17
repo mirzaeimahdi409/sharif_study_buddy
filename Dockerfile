@@ -34,5 +34,4 @@ RUN chmod 755 /app/entrypoint.sh && \
 # Expose port for the app
 EXPOSE 8014
 
-# Run the entrypoint script using sh (more reliable)
-ENTRYPOINT ["sh", "/app/entrypoint.sh"]
+ENTRYPOINT ["/bin/sh", "/app/entrypoint.sh"]

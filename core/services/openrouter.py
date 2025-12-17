@@ -1,0 +1,130 @@
+"""
+OpenRouter LLM integration for LangChain.
+Provides OpenRouterLLM class that wraps ChatOpenAI for OpenRouter API.
+"""
+import os
+import logging
+from typing import Optional, List, Dict, Any
+from langchain_openai import ChatOpenAI
+from langchain_core.language_models.llms import LLM
+from langchain_core.callbacks.manager import CallbackManagerForLLMRun
+from django.conf import settings
+from pydantic.v1 import PrivateAttr
+
+logger = logging.getLogger(__name__)
+
+
+class OpenRouterLLM(LLM):
+    """
+    OpenRouter LLM wrapper that provides a simple interface similar to the example.
+    Uses ChatOpenAI under the hood with OpenRouter's API endpoint.
+    """
+
+    api_key: str = ""
+    model: str = "openai/gpt-3.5-turbo"
+    temperature: float = 0.2
+    streaming: bool = False
+    base_url: str = "https://openrouter.ai/api/v1"
+
+    _chat_model: ChatOpenAI = PrivateAttr()
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: str = "openai/gpt-3.5-turbo",
+        temperature: float = 0.2,
+        streaming: bool = False,
+        **kwargs
+    ):
+        resolved_api_key = (
+            api_key
+            or getattr(settings, "OPENROUTER_API_KEY", None)
+            or os.getenv("OPENROUTER_API_KEY", "")
+        )
+        resolved_base_url = kwargs.pop(
+            "base_url",
+            os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+        )
+
+        # IMPORTANT: pass fields into the Pydantic/LangChain constructor
+        super().__init__(
+            api_key=resolved_api_key,
+            model=model,
+            temperature=temperature,
+            streaming=streaming,
+            base_url=resolved_base_url,
+            **kwargs,
+        )
+
+        if not self.api_key:
+            raise ValueError("OPENROUTER_API_KEY is required")
+
+        # Create internal ChatOpenAI instance
+        self._chat_model = ChatOpenAI(
+            model=self.model,
+            temperature=self.temperature,
+            api_key=self.api_key,
+            base_url=self.base_url,
+        )
+
+    @property
+    def _llm_type(self) -> str:
+        """Return type of LLM."""
+        return "openrouter"
+
+    def _call(
+        self,
+        prompt: str,
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> str:
+        """Call the LLM with a prompt string."""
+        # Convert prompt to messages format
+        messages = [{"role": "user", "content": prompt}]
+        response = self._chat_model.invoke(messages)
+        return response.content
+
+    async def _acall(
+        self,
+        prompt: str,
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        **kwargs: Any,
+    ) -> str:
+        """Async call the LLM with a prompt string."""
+        messages = [{"role": "user", "content": prompt}]
+        response = await self._chat_model.ainvoke(messages)
+        return response.content
+
+    def invoke(self, messages: List[Dict[str, str]], **kwargs: Any) -> Any:
+        """
+        Invoke the chat model with messages synchronously.
+
+        Args:
+            messages: List of message dictionaries with 'role' and 'content' keys
+            **kwargs: Additional arguments to pass to the chat model
+
+        Returns:
+            Chat message response from the model
+        """
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"Invoking LLM with {len(messages)} messages, model: {self.model}")
+        return self._chat_model.invoke(messages, **kwargs)
+
+    async def ainvoke(self, messages: List[Dict[str, str]], **kwargs: Any) -> Any:
+        """
+        Async invoke the chat model with messages.
+
+        Args:
+            messages: List of message dictionaries with 'role' and 'content' keys
+            **kwargs: Additional arguments to pass to the chat model
+
+        Returns:
+            Chat message response from the model
+        """
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"Async invoking LLM with {len(messages)} messages, model: {self.model}")
+        return await self._chat_model.ainvoke(messages, **kwargs)

@@ -1,0 +1,28 @@
+# Django
+django
+djangorestframework
+
+# Database
+psycopg2-binary
+
+# Environment variables
+python-decouple
+
+# Telegram Bot
+python-telegram-bot==22.5
+
+# AI & LangChain
+langchain==0.2.11
+langgraph
+langchain-openai
+httpx
+langchain-community==0.2.10
+langchain-core>=0.2.23
+# Caching & Background Tasks
+redis
+celery<6
+django-redis
+
+# HTTP Requests
+requests
+

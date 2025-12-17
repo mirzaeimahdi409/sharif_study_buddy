@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Python
-      # Use the same Python version as Dockerfile
+        # Use the same Python version as Dockerfile
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -64,7 +64,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/sharif-assistant-bot
+          images: ghcr.io/${{ github.repository_owner }}/sharif_study_buddy
           tags: |
             type=ref,event=branch
             type=ref,event=tag
@@ -107,11 +107,8 @@ jobs:
               echo "Warning: GHCR_TOKEN not set, skipping login"
             fi
 
-            # TODO: تنظیم مسیر صحیح پوشه docker-compose روی سرور
-            cd /opt/docker-compose/sharif-assistant-bot
+            cd /opt/docker-compose/sharif_study_buddy
             docker compose pull
             docker compose up -d
             docker image prune -f
             docker logout ghcr.io || true
-
-

@@ -19,6 +19,7 @@ from telegram.ext import (
     filters,
 )
 
+
 from core.models import ChatSession, KnowledgeDocument, UserProfile
 from core.services.langgraph_pipeline import run_graph
 from core.services.rag_client import RAGClient, RAGClientError
@@ -36,7 +37,9 @@ logger = logging.getLogger(__name__)
     ADMIN_NEW_URL_DOC_URL,
     ADMIN_NEW_URL_DOC_TITLE,
     ADMIN_LIST_DOCS,
-) = range(7)
+    ADMIN_CHANNELS_ADD_USERNAME,
+    ADMIN_CHANNELS_REMOVE_USERNAME,
+) = range(9)
 
 
 WELCOME = (
@@ -162,6 +165,8 @@ class SharifBot:
         keyboard = [
             [InlineKeyboardButton("📚 مدیریت اسناد دانش",
                                   callback_data="admin:docs")],
+            [InlineKeyboardButton("📡 مدیریت کانال‌ها",
+                                  callback_data="admin:channels")],
             [InlineKeyboardButton(
                 "📊 آمار کلی بات", callback_data="admin:stats")],
             [InlineKeyboardButton("❌ خروج از حالت ادمین",
@@ -227,6 +232,57 @@ class SharifBot:
         if data == "admin:back_main":
             await query.edit_message_text("👑 پنل ادمین:", reply_markup=self._admin_main_keyboard())
             return ADMIN_MAIN
+
+        if data == "admin:channels":
+            keyboard = [
+                [InlineKeyboardButton(
+                    "➕ افزودن کانال", callback_data="admin:channels:add")],
+                [InlineKeyboardButton(
+                    "🗑️ حذف کانال", callback_data="admin:channels:remove")],
+                [InlineKeyboardButton(
+                    "📜 لیست کانال‌ها", callback_data="admin:channels:list")],
+                [InlineKeyboardButton(
+                    "⬅️ بازگشت", callback_data="admin:back_main")],
+            ]
+            await query.edit_message_text(
+                "📡 مدیریت کانال‌ها:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+            return ADMIN_MAIN
+
+        if data == "admin:channels:list":
+            # Re-implement list_channels logic to work with callbacks
+            from monitoring.models import MonitoredChannel
+            channels = MonitoredChannel.objects.all()
+            count = await channels.acount()
+
+            if count == 0:
+                await query.answer("هیچ کانالی برای مانیتورینگ ثبت نشده است.", show_alert=True)
+                return ADMIN_MAIN
+
+            message = "📜 لیست کانال‌های در حال مانیتور:\n\n"
+            channel_list = []
+            async for channel in channels:
+                # MarkdownV2 needs escaping for characters like '_'
+                username_escaped = channel.username.replace("_", "\\_")
+                channel_list.append(f"- `@{username_escaped}`")
+
+            message += "\n".join(channel_list)
+
+            keyboard = [
+                [InlineKeyboardButton(
+                    "⬅️ بازگشت به مدیریت کانال‌ها", callback_data="admin:channels")]
+            ]
+            await query.edit_message_text(message, parse_mode='MarkdownV2', reply_markup=InlineKeyboardMarkup(keyboard))
+            return ADMIN_MAIN
+
+        if data == "admin:channels:add":
+            await query.edit_message_text("لطفاً نام کاربری کانال جدید را برای افزودن ارسال کنید:")
+            return ADMIN_CHANNELS_ADD_USERNAME
+
+        if data == "admin:channels:remove":
+            await query.edit_message_text("لطفاً نام کاربری کانال را برای حذف ارسال کنید:")
+            return ADMIN_CHANNELS_REMOVE_USERNAME
 
         if data == "admin:stats":
             from core.models import ChatMessage as CM
@@ -522,6 +578,48 @@ class SharifBot:
         context.user_data.pop("new_doc_source_url", None)
         return ConversationHandler.END
 
+    async def admin_channels_add_username(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not update.message or not update.message.text:
+            return ADMIN_CHANNELS_ADD_USERNAME
+
+        channel_username = update.message.text.lstrip('@').strip()
+        if not channel_username:
+            await update.message.reply_text("نام کاربری نامعتبر است. لطفاً دوباره تلاش کنید.")
+            return ADMIN_CHANNELS_ADD_USERNAME
+
+        from monitoring.models import MonitoredChannel
+        _, created = await MonitoredChannel.objects.aget_or_create(username=channel_username)
+
+        if created:
+            await update.message.reply_text(f"✅ کانال @{channel_username} با موفقیت اضافه شد.")
+        else:
+            await update.message.reply_text(f"⚠️ کانال @{channel_username} از قبل وجود داشت.")
+
+        # Return to main admin menu
+        await update.message.reply_text("👑 پنل ادمین:", reply_markup=self._admin_main_keyboard())
+        return ADMIN_MAIN
+
+    async def admin_channels_remove_username(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not update.message or not update.message.text:
+            return ADMIN_CHANNELS_REMOVE_USERNAME
+
+        channel_username = update.message.text.lstrip('@').strip()
+        if not channel_username:
+            await update.message.reply_text("نام کاربری نامعتبر است. لطفاً دوباره تلاش کنید.")
+            return ADMIN_CHANNELS_REMOVE_USERNAME
+
+        from monitoring.models import MonitoredChannel
+        try:
+            channel = await MonitoredChannel.objects.aget(username=channel_username)
+            await channel.adelete()
+            await update.message.reply_text(f"🗑 کانال @{channel_username} با موفقیت حذف شد.")
+        except MonitoredChannel.DoesNotExist:
+            await update.message.reply_text(f"❌ کانال @{channel_username} یافت نشد.")
+
+        # Return to main admin menu
+        await update.message.reply_text("👑 پنل ادمین:", reply_markup=self._admin_main_keyboard())
+        return ADMIN_MAIN
+
     async def admin_cancel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message:
             await update.message.reply_text("خروج از حالت ادمین انجام شد.")
@@ -779,6 +877,14 @@ class SharifBot:
                     MessageHandler(filters.TEXT & ~filters.COMMAND,
                                    self.admin_new_url_doc_title)
                 ],
+                ADMIN_CHANNELS_ADD_USERNAME: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND,
+                                   self.admin_channels_add_username)
+                ],
+                ADMIN_CHANNELS_REMOVE_USERNAME: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND,
+                                   self.admin_channels_remove_username)
+                ],
             },
             fallbacks=[
                 CommandHandler("cancel", self.admin_cancel),
@@ -794,6 +900,7 @@ class SharifBot:
         self.application.add_handler(CommandHandler("reset", self.reset_cmd))
         self.application.add_handler(CommandHandler("start", self.start))
         self.application.add_handler(CommandHandler("help", self.help_cmd))
+
         self.application.add_handler(admin_conv)
         self.application.add_handler(CallbackQueryHandler(self.debug_callback))
         self.application.add_handler(MessageHandler(

@@ -25,6 +25,9 @@ SECRET_KEY = config("SECRET_KEY")
 
 # Telegram Bot
 TELEGRAM_BOT_TOKEN = config("TELEGRAM_BOT_TOKEN", default=None)
+TELEGRAM_API_ID = config("TELEGRAM_API_ID", default=None, cast=int)
+TELEGRAM_API_HASH = config("TELEGRAM_API_HASH", default=None)
+
 
 # AI Services
 OPENROUTER_API_KEY = config("OPENROUTER_API_KEY", default=None)
@@ -57,6 +60,7 @@ INSTALLED_APPS = [
     # Local apps
     "core.apps.CoreConfig",
     "bot.apps.BotConfig",
+    "monitoring.apps.MonitoringConfig",
 ]
 
 MIDDLEWARE = [
@@ -191,3 +195,11 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
 CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60  # 25 minutes
+
+# Celery Beat Schedule
+CELERY_BEAT_SCHEDULE = {
+    'harvest-telegram-channels-every-15-minutes': {
+        'task': 'monitoring.tasks.harvest_channels_task',
+        'schedule': 60 * 1,  # Runs every 15 minutes
+    },
+}

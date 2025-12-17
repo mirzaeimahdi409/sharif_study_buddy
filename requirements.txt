@@ -26,3 +26,5 @@ django-redis
 # HTTP Requests
 requests
 
+# Telegram Channel Harvester
+telethon

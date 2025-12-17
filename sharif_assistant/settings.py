@@ -149,12 +149,26 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 REDIS_HOST = config("REDIS_HOST", default="localhost")
 REDIS_PORT = config("REDIS_PORT", default="6379", cast=int)
 REDIS_DB = config("REDIS_DB", default=0, cast=int)
+REDIS_PASSWORD = config("REDIS_PASSWORD", default="", cast=str)
+
+
+def _redis_url(db: int) -> str:
+    """
+    Build a Redis URL, optionally with password.
+    Format:
+      redis://:password@host:port/db
+      redis://host:port/db  (if no password)
+    """
+    if REDIS_PASSWORD:
+        return f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{db}"
+    return f"redis://{REDIS_HOST}:{REDIS_PORT}/{db}"
+
 
 # Cache Configuration
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
-        "LOCATION": f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}",
+        "LOCATION": _redis_url(REDIS_DB),
         "OPTIONS": {
             "CLIENT_CLASS": "django_redis.client.DefaultClient",
         },
@@ -165,9 +179,11 @@ CACHES = {
 
 # Celery Configuration
 CELERY_BROKER_URL = config(
-    "CELERY_BROKER_URL", default=f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB + 1}")
+    "CELERY_BROKER_URL", default=_redis_url(REDIS_DB + 1)
+)
 CELERY_RESULT_BACKEND = config(
-    "CELERY_RESULT_BACKEND", default=f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB + 1}")
+    "CELERY_RESULT_BACKEND", default=_redis_url(REDIS_DB + 1)
+)
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"

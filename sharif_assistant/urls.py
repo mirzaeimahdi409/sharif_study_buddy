@@ -20,8 +20,8 @@ from django.urls import path
 from django.conf import settings
 from decouple import config
 
-# Import webhook view
-from bot.views import telegram_webhook
+# Import webhook views
+from bot.views import telegram_webhook, bot_health_check
 
 # Get webhook path from config (optional)
 
@@ -41,6 +41,7 @@ def get_webhook_path():
 # Build URL patterns
 urlpatterns = [
     path("admin/", admin.site.urls),
+    path("health/", bot_health_check, name="bot_health_check"),
 ]
 
 # Add webhook endpoint - use fixed path (no token in URL for better security)

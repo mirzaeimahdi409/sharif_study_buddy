@@ -56,31 +56,41 @@ def run_async_application(bot: SharifBot) -> None:
                 logger.error(f"Error during shutdown: {e}", exc_info=True)
 
     # Run in a new event loop
+    loop = None
     try:
+        logger.info("Creating new event loop for bot application")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        logger.info("Starting bot application main coroutine")
         loop.run_until_complete(main())
+        logger.info("Bot application main coroutine completed")
     except KeyboardInterrupt:
         logger.info("Bot stopped by user (KeyboardInterrupt)")
     except Exception as e:
         logger.exception(
             f"Fatal error in async application: {e}", exc_info=True)
-        raise
+        # Don't raise - let the thread die gracefully
+        logger.error("Bot thread will exit due to fatal error")
     finally:
         if loop:
             try:
                 # Cancel all pending tasks
                 pending = asyncio.all_tasks(loop)
-                for task in pending:
-                    task.cancel()
-                # Wait for tasks to complete cancellation
                 if pending:
+                    logger.info(f"Cancelling {len(pending)} pending tasks")
+                    for task in pending:
+                        task.cancel()
+                    # Wait for tasks to complete cancellation
                     loop.run_until_complete(asyncio.gather(
                         *pending, return_exceptions=True))
             except Exception as e:
                 logger.error(f"Error cleaning up tasks: {e}", exc_info=True)
             finally:
-                loop.close()
+                try:
+                    loop.close()
+                    logger.info("Event loop closed")
+                except Exception as e:
+                    logger.error(f"Error closing event loop: {e}", exc_info=True)
 
 
 def signal_handler(signum, frame):

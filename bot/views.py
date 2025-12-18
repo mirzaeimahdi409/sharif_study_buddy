@@ -51,6 +51,8 @@ def telegram_webhook(request: HttpRequest) -> HttpResponse:
     This view receives updates from Telegram and puts them into the bot's update queue.
     """
     try:
+        logger.debug("Received webhook request")
+        
         # Verify secret token if configured
         if not verify_webhook_secret(request):
             logger.warning("Invalid webhook secret token")
@@ -70,14 +72,18 @@ def telegram_webhook(request: HttpRequest) -> HttpResponse:
                 "Bot application instance exists but not fully initialized yet. Waiting...")
             # Wait a bit for initialization (max 5 seconds)
             import time
-            for _ in range(50):  # 50 * 0.1 = 5 seconds max wait
+            for i in range(50):  # 50 * 0.1 = 5 seconds max wait
                 time.sleep(0.1)
                 if is_bot_initialized():
-                    logger.info("Bot application is now initialized")
+                    logger.info(f"Bot application is now initialized after {i * 0.1:.1f}s")
                     break
             else:
-                logger.error("Bot application initialization timeout")
-                return HttpResponseBadRequest("Bot application initialization timeout")
+                logger.error("Bot application initialization timeout after 5 seconds")
+                # Return 200 to avoid Telegram retries, but log the error
+                # The update will be lost, but at least we won't spam Telegram
+                if not is_bot_initialized():
+                    logger.error("Bot still not initialized after timeout - update will be lost")
+                    return HttpResponse(status=200)  # Return 200 to stop Telegram retries
 
         # Parse the JSON body
         body = request.body.decode('utf-8')
@@ -116,12 +122,37 @@ def telegram_webhook(request: HttpRequest) -> HttpResponse:
                 finally:
                     loop.close()
 
-        logger.debug(f"Received update: {update.update_id}")
+        logger.info(f"Successfully queued update: {update.update_id}")
         return HttpResponse(status=200)
 
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in webhook request: {e}")
         return HttpResponseBadRequest("Invalid JSON")
     except Exception as e:
-        logger.exception(f"Error processing webhook update: {e}")
-        return HttpResponseBadRequest(f"Error processing update: {e}")
+        logger.exception(f"Error processing webhook update: {e}", exc_info=True)
+        # Return 200 to Telegram even on error to avoid retries
+        # Telegram will retry if we return error status
+        return HttpResponse(status=200)
+
+
+def bot_health_check(request: HttpRequest) -> HttpResponse:
+    """
+    Health check endpoint to verify bot application status.
+    """
+    from bot.app import get_bot_application, is_bot_initialized, get_bot_event_loop
+    
+    application = get_bot_application()
+    initialized = is_bot_initialized()
+    event_loop = get_bot_event_loop()
+    
+    status = {
+        "application_exists": application is not None,
+        "initialized": initialized,
+        "event_loop_exists": event_loop is not None,
+        "event_loop_running": event_loop.is_running() if event_loop else False,
+    }
+    
+    if all([status["application_exists"], status["initialized"], status["event_loop_running"]]):
+        return HttpResponse(f"OK: {status}", status=200, content_type="text/plain")
+    else:
+        return HttpResponse(f"NOT READY: {status}", status=503, content_type="text/plain")

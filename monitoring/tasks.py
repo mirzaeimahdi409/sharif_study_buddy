@@ -5,6 +5,7 @@ import requests
 from celery import shared_task
 from django.conf import settings
 from django.utils import timezone
+from asgiref.sync import sync_to_async
 from telethon import TelegramClient
 from telethon.tl.types import Message
 
@@ -156,7 +157,11 @@ async def _harvest_channel_async(client, channel_username):
     try:
         async for message in client.iter_messages(channel_username, limit=150):
             if is_message_relevant(message):
-                ingest_message_to_kb(message, channel_username)
+                # Run Django/requests-based ingestion in a sync thread
+                await sync_to_async(
+                    ingest_message_to_kb,
+                    thread_sensitive=True,
+                )(message, channel_username)
     except Exception as e:
         print(f"Could not process channel {channel_username}: {e}")
 

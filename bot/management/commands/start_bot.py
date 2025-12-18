@@ -135,7 +135,12 @@ class Command(BaseCommand):
                 secret_token = TelegramConfig.get_webhook_secret_token()
 
                 # Build webhook URL (without token in path for better security)
-                webhook_url = f"https://{webhook_domain}{webhook_path}"
+                # Ensure trailing slash to match Django URL pattern
+                if webhook_path:
+                    webhook_url = f"https://{webhook_domain}{webhook_path}/"
+                else:
+                    # Root path
+                    webhook_url = f"https://{webhook_domain}/"
 
                 if secret_token:
                     logger.info("Using secret token for webhook security")

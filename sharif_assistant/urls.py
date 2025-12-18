@@ -29,7 +29,7 @@ from bot.views import telegram_webhook
 def get_webhook_path():
     """Get webhook path prefix from settings or env."""
     path = getattr(settings, "WEBHOOK_PATH", None) or config(
-        "WEBHOOK_PATH", default="")
+        "WEBHOOK_PATH", default="/webhook")
     # Ensure path starts with / and doesn't end with /
     if path and not path.startswith("/"):
         path = "/" + path

@@ -74,23 +74,49 @@ def harvest_channels_task():
     # Get Telegram credentials from Django settings
     api_id = settings.TELEGRAM_API_ID
     api_hash = settings.TELEGRAM_API_HASH
-    session_name = 'telegram_session'
+    bot_token = settings.TELEGRAM_BOT_TOKEN
 
-    # Create the Telegram client as in the official docs:
-    #   client = TelegramClient(name, api_id, api_hash)
+    if not api_id or not api_hash:
+        print("TELEGRAM_API_ID / TELEGRAM_API_HASH are not configured. Exiting.")
+        return
+
+    if not bot_token:
+        print("TELEGRAM_BOT_TOKEN is not configured. Exiting.")
+        return
+
+    # Use a session name as in the official Telethon docs:
+    #   client = TelegramClient('session_name', api_id, api_hash)
+    # Here we authenticate as a **bot** (no phone number) using:
+    #   await client.start(bot_token=...)
+    session_name = 'telegram_bot_session'
+
     client = TelegramClient(session_name, api_id, api_hash)
 
     async def main():
-        try:
-            await client.connect()
+        """
+        Use a **bot session** (no phone number) to harvest messages from channels.
 
-            # if not await client.is_user_authorized():
-            #     print(
-            #         "Telegram session is not authorized. "
-            #         "Please create it once manually using Telethon (client.start(phone=...)) "
-            #         "so that 'telegram_session' is stored, then rerun the worker."
-            #     )
-            #     return
+        As shown in the Telethon README
+        (`https://github.com/LonamiWebs/Telethon`), the recommended pattern is:
+
+            from telethon import TelegramClient
+            client = TelegramClient('session_name', api_id, api_hash)
+            client.start()
+
+        For bots, Telethon also supports:
+
+            client = TelegramClient('session_name', api_id, api_hash)
+            client.start(bot_token='YOUR_BOT_TOKEN')
+
+        We follow the same approach here, but in an async Celery task:
+        create the client once and then call `await client.start(bot_token=...)`
+        so no interactive phone/OTP flow is needed, and the same `api_id` /
+        `api_hash` pair is reused for the bot.
+        """
+        try:
+            # This will authorize the bot using the configured token and will
+            # also create/update the local session file `telegram_bot_session.session`.
+            await client.start(bot_token=bot_token)
 
             tasks = [
                 _harvest_channel_async(client, username) for username in channels

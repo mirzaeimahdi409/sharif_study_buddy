@@ -30,12 +30,27 @@ def _delete_rag_documents(doc_ids: Iterable[str]) -> None:
     if rag_api_key:
         headers["Authorization"] = f"Bearer {rag_api_key}"
 
+    # RAG delete endpoint expects user_id (and often microservice) as query params.
+    # Keep them consistent with what we use for ingest/search.
+    user_id = str(getattr(settings, "RAG_USER_ID", "") or "")
+    microservice = getattr(settings, "RAG_MICROSERVICE", None) or "telegram_bot"
+    base_params = {}
+    if user_id:
+        base_params["user_id"] = user_id
+    if microservice:
+        base_params["microservice"] = microservice
+
     for doc_id in doc_ids:
         if not doc_id:
             continue
         url = f"{base_url}/knowledge/documents/{doc_id}/"
         try:
-            resp = requests.delete(url, headers=headers, timeout=10)
+            resp = requests.delete(
+                url,
+                headers=headers,
+                params=base_params,
+                timeout=10,
+            )
             if resp.status_code not in (200, 204, 404):
                 logger.warning(
                     "Unexpected status when deleting RAG document %s: %s %s",

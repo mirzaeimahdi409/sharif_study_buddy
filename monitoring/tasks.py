@@ -112,6 +112,23 @@ def ingest_message_to_kb(message: Message, channel_username: str):
     }
 
     try:
+        # --- Debug: show exact payload sent to RAG ---
+        try:
+            import json
+
+            pretty_payload = json.dumps(payload, ensure_ascii=False, indent=2)
+            print(
+                "📤 RAG ingest-channel-message payload "
+                f"(channel={channel_username}, message_id={message.id}):\n"
+                f"{pretty_payload}"
+            )
+        except Exception:
+            # Fallback in case json or encoding fails
+            print(
+                f"📤 RAG ingest-channel-message payload (raw) for "
+                f"{channel_username}/{message.id}: {payload}"
+            )
+
         rec.attempts = (rec.attempts or 0) + 1
         rec.last_attempt_at = timezone.now()
         rec.source_url = message_link

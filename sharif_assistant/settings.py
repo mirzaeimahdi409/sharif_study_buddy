@@ -27,6 +27,7 @@ SECRET_KEY = config("SECRET_KEY")
 TELEGRAM_BOT_TOKEN = config("TELEGRAM_BOT_TOKEN", default=None)
 TELEGRAM_API_ID = config("TELEGRAM_API_ID", default=None, cast=int)
 TELEGRAM_API_HASH = config("TELEGRAM_API_HASH", default=None)
+TELEGRAM_PHONE = config("TELEGRAM_PHONE", default=None)
 
 
 # AI Services

@@ -274,8 +274,9 @@ class SharifBot:
             channel_list = []
             async for channel in channels:
                 # MarkdownV2 needs escaping for characters like '_'
-                username_escaped = channel.username.replace("_", "\\_")
-                channel_list.append(f"- `@{username_escaped}`")
+                # The username is inside backticks, so it's treated as a literal.
+                # The leading hyphen must be escaped for MarkdownV2.
+                channel_list.append(f"\\- `@{channel.username}`")
 
             message += "\n".join(channel_list)
 

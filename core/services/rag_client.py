@@ -43,8 +43,14 @@ class RAGClient:
             or os.getenv("RAG_API_KEY")
         )
         # Default identifiers / knobs for RAG
-        # For now we use a fixed numeric user_id and microservice name as requested.
-        self.default_user_id = os.getenv("RAG_DEFAULT_USER_ID", "5")
+        # Always prefer Django's RAG_USER_ID; fall back to envs only if missing.
+        # This ensures the same user_id is used consistently for ingest + search.
+        self.default_user_id = str(
+            getattr(settings, "RAG_USER_ID", None)
+            or os.getenv("RAG_USER_ID")
+            or os.getenv("RAG_DEFAULT_USER_ID")
+            or "5"
+        )
         self.microservice = os.getenv("RAG_MICROSERVICE", "telegram_bot")
         # Default retrieval score threshold (can be overridden via env)
         self.score_threshold = float(

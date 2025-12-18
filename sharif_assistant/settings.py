@@ -28,7 +28,8 @@ TELEGRAM_BOT_TOKEN = config("TELEGRAM_BOT_TOKEN", default=None)
 TELEGRAM_API_ID = config("TELEGRAM_API_ID", default=None, cast=int)
 TELEGRAM_API_HASH = config("TELEGRAM_API_HASH", default=None)
 # Harvester deduplication: skip ingesting messages whose normalized text was already ingested
-TELEGRAM_DEDUP_BY_CONTENT = config("TELEGRAM_DEDUP_BY_CONTENT", default=False, cast=bool)
+TELEGRAM_DEDUP_BY_CONTENT = config(
+    "TELEGRAM_DEDUP_BY_CONTENT", default=False, cast=bool)
 
 
 # AI Services
@@ -37,7 +38,7 @@ RAG_API_URL = config("RAG_API_URL", default="http://45.67.139.109:8033/api")
 # Optional, if RAG service requires authentication
 RAG_API_KEY = config("RAG_API_KEY", default=None)
 # User ID for RAG document ownership (used when ingesting Telegram messages)
-RAG_USER_ID = config("RAG_USER_ID", default=1, cast=int)
+RAG_USER_ID = config("RAG_USER_ID", default=5, cast=int)
 
 # Admins (Telegram IDs, comma-separated, e.g. "123456,789012")
 ADMIN_TELEGRAM_IDS = config("ADMIN_TELEGRAM_IDS", default="")

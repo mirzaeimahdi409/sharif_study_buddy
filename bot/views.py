@@ -52,7 +52,7 @@ def telegram_webhook(request: HttpRequest) -> HttpResponse:
     """
     try:
         logger.debug("Received webhook request")
-        
+
         # Verify secret token if configured
         if not verify_webhook_secret(request):
             logger.warning("Invalid webhook secret token")
@@ -75,15 +75,19 @@ def telegram_webhook(request: HttpRequest) -> HttpResponse:
             for i in range(50):  # 50 * 0.1 = 5 seconds max wait
                 time.sleep(0.1)
                 if is_bot_initialized():
-                    logger.info(f"Bot application is now initialized after {i * 0.1:.1f}s")
+                    logger.info(
+                        f"Bot application is now initialized after {i * 0.1:.1f}s")
                     break
             else:
-                logger.error("Bot application initialization timeout after 5 seconds")
+                logger.error(
+                    "Bot application initialization timeout after 5 seconds")
                 # Return 200 to avoid Telegram retries, but log the error
                 # The update will be lost, but at least we won't spam Telegram
                 if not is_bot_initialized():
-                    logger.error("Bot still not initialized after timeout - update will be lost")
-                    return HttpResponse(status=200)  # Return 200 to stop Telegram retries
+                    logger.error(
+                        "Bot still not initialized after timeout - update will be lost")
+                    # Return 200 to stop Telegram retries
+                    return HttpResponse(status=200)
 
         # Parse the JSON body
         body = request.body.decode('utf-8')
@@ -100,12 +104,19 @@ def telegram_webhook(request: HttpRequest) -> HttpResponse:
 
         if bot_loop is not None and bot_loop.is_running():
             # Schedule the coroutine in the bot's event loop (thread-safe)
-            future = asyncio.run_coroutine_threadsafe(
-                application.update_queue.put(update),
-                bot_loop
-            )
-            # Don't wait for completion to avoid blocking the request
-            # The future will complete asynchronously
+            try:
+                future = asyncio.run_coroutine_threadsafe(
+                    application.update_queue.put(update),
+                    bot_loop
+                )
+                # Don't wait for completion to avoid blocking the request
+                # The future will complete asynchronously
+                logger.debug(f"Update {update.update_id} queued successfully")
+            except Exception as e:
+                logger.error(
+                    f"Failed to queue update {update.update_id}: {e}", exc_info=True)
+                # Return 200 to avoid Telegram retries
+                return HttpResponse(status=200)
         else:
             # Fallback: try to use current event loop or create a new one
             try:
@@ -122,14 +133,16 @@ def telegram_webhook(request: HttpRequest) -> HttpResponse:
                 finally:
                     loop.close()
 
-        logger.info(f"Successfully queued update: {update.update_id}")
+        logger.info(
+            f"Successfully processed webhook request for update: {update.update_id}")
         return HttpResponse(status=200)
 
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON in webhook request: {e}")
         return HttpResponseBadRequest("Invalid JSON")
     except Exception as e:
-        logger.exception(f"Error processing webhook update: {e}", exc_info=True)
+        logger.exception(
+            f"Error processing webhook update: {e}", exc_info=True)
         # Return 200 to Telegram even on error to avoid retries
         # Telegram will retry if we return error status
         return HttpResponse(status=200)
@@ -140,18 +153,18 @@ def bot_health_check(request: HttpRequest) -> HttpResponse:
     Health check endpoint to verify bot application status.
     """
     from bot.app import get_bot_application, is_bot_initialized, get_bot_event_loop
-    
+
     application = get_bot_application()
     initialized = is_bot_initialized()
     event_loop = get_bot_event_loop()
-    
+
     status = {
         "application_exists": application is not None,
         "initialized": initialized,
         "event_loop_exists": event_loop is not None,
         "event_loop_running": event_loop.is_running() if event_loop else False,
     }
-    
+
     if all([status["application_exists"], status["initialized"], status["event_loop_running"]]):
         return HttpResponse(f"OK: {status}", status=200, content_type="text/plain")
     else:

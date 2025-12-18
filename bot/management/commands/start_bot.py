@@ -90,7 +90,8 @@ def run_async_application(bot: SharifBot) -> None:
                     loop.close()
                     logger.info("Event loop closed")
                 except Exception as e:
-                    logger.error(f"Error closing event loop: {e}", exc_info=True)
+                    logger.error(
+                        f"Error closing event loop: {e}", exc_info=True)
 
 
 def signal_handler(signum, frame):

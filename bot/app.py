@@ -164,8 +164,8 @@ class SharifBot:
         Set up webhook mode (custom webhook setup).
         This sets the webhook URL with Telegram but doesn't start a web server.
         The webhook requests will be handled by Django views.
+        Note: Handlers should already be set up via start_application()
         """
-        self.setup_handlers()
         if not self.config.webhook_url:
             logger.error("Webhook URL not provided in config.")
             return
@@ -198,6 +198,11 @@ class SharifBot:
         """Start the bot application (for custom webhook mode)."""
         global _bot_event_loop
         logger.info("Starting bot application...")
+        # Setup handlers before initializing
+        self.setup_handlers()
+        # Initialize the application first
+        await self.application.initialize()
+        # Then start it
         await self.application.start()
         # Store the event loop for use in webhook views
         _bot_event_loop = asyncio.get_running_loop()
@@ -206,11 +211,23 @@ class SharifBot:
     async def stop_application(self) -> None:
         """Stop the bot application."""
         logger.info("Stopping bot application...")
-        await self.application.stop()
-        logger.info("Bot application stopped")
+        try:
+            await self.application.stop()
+            logger.info("Bot application stopped")
+        except RuntimeError as e:
+            # Ignore if application is not running
+            if "not running" not in str(e).lower():
+                raise
+            logger.warning("Bot application was not running")
 
     async def shutdown_application(self) -> None:
         """Shutdown the bot application."""
         logger.info("Shutting down bot application...")
-        await self.application.shutdown()
-        logger.info("Bot application shut down")
+        try:
+            await self.application.shutdown()
+            logger.info("Bot application shut down")
+        except RuntimeError as e:
+            # Ignore if application is not initialized
+            if "not initialized" not in str(e).lower():
+                raise
+            logger.warning("Bot application was not initialized")

@@ -26,10 +26,10 @@ def run_async_application(bot: SharifBot) -> None:
     """
     async def main():
         try:
-            # Start the application
+            # Initialize and start the application
             await bot.start_application()
 
-            # Set up the webhook URL
+            # Set up the webhook URL (after application is started)
             await bot.setup_webhook()
 
             logger.info("Bot application is running. Waiting for updates...")

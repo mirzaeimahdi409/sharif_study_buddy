@@ -109,6 +109,18 @@ def _format_answer_markdown_to_html(text: str) -> str:
     return text
 
 
+def _escape_markdown_v2(text: str) -> str:
+    """
+    Escape special characters for Telegram MarkdownV2 format.
+    Characters that need escaping: _ * [ ] ( ) ~ ` > # + - = | { } . !
+    """
+    special_chars = ['_', '*', '[', ']',
+                     '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']
+    for char in special_chars:
+        text = text.replace(char, f'\\{char}')
+    return text
+
+
 async def _get_profile_and_session(update: Update) -> ChatSession:
     User = get_user_model()
     tg_user = update.effective_user
@@ -145,12 +157,10 @@ async def _get_profile_and_session(update: Update) -> ChatSession:
 @dataclass(frozen=True)
 class SharifBotConfig:
     token: str
+    webhook_url: str | None = None
 
 
 class SharifBot:
-    """
-    Class-based bot runner, modeled after DiningBot's `DiningBot(...).run()` style.
-    """
 
     def __init__(self, config: SharifBotConfig) -> None:
         self.config = config
@@ -335,7 +345,11 @@ class SharifBot:
             if rag_latency is not None:
                 text += f"- تاخیر تقریبی جستجو: {rag_latency} ms\n"
 
-            await query.edit_message_text(text, reply_markup=self._admin_main_keyboard())
+            await query.edit_message_text(
+                _escape_markdown_v2(text),
+                reply_markup=self._admin_main_keyboard(),
+                parse_mode='MarkdownV2'
+            )
             return ADMIN_MAIN
 
         if data == "admin:push_unindexed":
@@ -906,7 +920,23 @@ class SharifBot:
         self.application.add_handler(MessageHandler(
             filters.TEXT & ~filters.COMMAND, self.on_text))
 
-    def run(self) -> None:
+    def run_polling(self) -> None:
+        """Run the bot in polling mode."""
         self.setup_handlers()
         logger.info("Starting bot polling...")
         self.application.run_polling(allowed_updates=Update.ALL_TYPES)
+
+    async def run_webhook(self) -> None:
+        """Run the bot in webhook mode."""
+        self.setup_handlers()
+        if not self.config.webhook_url:
+            logger.error("Webhook URL not provided in config.")
+            return
+
+        logger.info(f"Starting bot with webhook: {self.config.webhook_url}")
+        await self.application.run_webhook(
+            listen="0.0.0.0",
+            port=8443,
+            webhook_url=self.config.webhook_url,
+            allowed_updates=Update.ALL_TYPES,
+        )

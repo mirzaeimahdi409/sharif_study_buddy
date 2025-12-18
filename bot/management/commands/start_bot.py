@@ -1,4 +1,6 @@
 import logging
+import os
+import asyncio
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
@@ -13,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 class Command(BaseCommand):
-    help = 'Starts the Telegram bot'
+    help = 'Starts the Telegram bot in polling or webhook mode'
 
     def handle(self, *args, **options):
         self.stdout.write(self.style.SUCCESS('Starting Telegram bot...'))
@@ -24,14 +26,40 @@ class Command(BaseCommand):
             logger.error("TELEGRAM_BOT_TOKEN not configured")
             return
 
-        try:
-            bot = SharifBot(SharifBotConfig(token=token))
-            logger.info("Telegram bot application initialized successfully (class-based runner)")
-            self.stdout.write(self.style.SUCCESS(
-                '✅ Bot is running. Press CTRL-C to stop.'))
-            logger.info("Starting bot polling...")
+        run_mode = os.getenv("DJANGO_ENV", "development")
 
-            bot.run()
+        try:
+            if run_mode == "production":
+                # --- Webhook Mode ---
+                webhook_domain = getattr(settings, "WEBHOOK_DOMAIN", None)
+                if not webhook_domain:
+                    self.stdout.write(self.style.ERROR(
+                        '❌ WEBHOOK_DOMAIN not set in production environment.'))
+                    logger.error("WEBHOOK_DOMAIN not configured for production")
+                    return
+
+                webhook_url = f"https://{webhook_domain}/{token}"
+                bot_config = SharifBotConfig(token=token, webhook_url=webhook_url)
+                bot = SharifBot(bot_config)
+
+                logger.info("Telegram bot application initialized for webhook mode.")
+                self.stdout.write(self.style.SUCCESS(
+                    f'✅ Bot is starting in webhook mode. URL: {webhook_url}'))
+                
+                # Run the async webhook setup
+                asyncio.run(bot.run_webhook())
+
+            else:
+                # --- Polling Mode ---
+                bot_config = SharifBotConfig(token=token)
+                bot = SharifBot(bot_config)
+
+                logger.info("Telegram bot application initialized for polling mode.")
+                self.stdout.write(self.style.SUCCESS(
+                    '✅ Bot is running in polling mode. Press CTRL-C to stop.'))
+                
+                # This is a blocking call
+                bot.run_polling()
 
         except KeyboardInterrupt:
             logger.info("Bot stopped by user (KeyboardInterrupt)")

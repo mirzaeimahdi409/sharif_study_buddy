@@ -33,7 +33,8 @@ def _delete_rag_documents(doc_ids: Iterable[str]) -> None:
     # RAG delete endpoint expects user_id (and often microservice) as query params.
     # Keep them consistent with what we use for ingest/search.
     user_id = str(getattr(settings, "RAG_USER_ID", "") or "")
-    microservice = getattr(settings, "RAG_MICROSERVICE", None) or "telegram_bot"
+    microservice = getattr(settings, "RAG_MICROSERVICE",
+                           None) or "telegram_bot"
     base_params = {}
     if user_id:
         base_params["user_id"] = user_id

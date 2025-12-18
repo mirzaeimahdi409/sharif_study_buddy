@@ -45,20 +45,14 @@ from bot.handlers.callback_handlers import debug_callback_handler
 
 logger = logging.getLogger(__name__)
 
-# Global variables to store the bot application instance and event loop for webhook access
+# Global state for webhook access
 _bot_application: Application | None = None
 _bot_event_loop: asyncio.AbstractEventLoop | None = None
-_bot_initialized: bool = False
 
 
 def get_bot_application() -> Application | None:
     """Get the global bot application instance."""
     return _bot_application
-
-
-def is_bot_initialized() -> bool:
-    """Check if bot application is initialized and ready."""
-    return _bot_initialized
 
 
 def get_bot_event_loop() -> asyncio.AbstractEventLoop | None:
@@ -81,8 +75,11 @@ class SharifBot:
         """Initialize the bot with configuration."""
         global _bot_application
         self.config = config
-        self.application: Application = Application.builder().token(config.token).build()
-        # Store globally for webhook access
+        # For webhook mode, disable the internal updater
+        builder = Application.builder().token(config.token)
+        if config.webhook_url:
+            builder = builder.updater(None)
+        self.application: Application = builder.build()
         _bot_application = self.application
 
     def setup_handlers(self) -> None:
@@ -100,58 +97,46 @@ class SharifBot:
                         admin_main_callback_handler, pattern=r"^admin:")
                 ],
                 ADMIN_NEW_DOC_TITLE: [
-                    MessageHandler(
-                        filters.TEXT & ~filters.COMMAND, admin_new_doc_title_handler
-                    )
+                    MessageHandler(filters.TEXT & ~filters.COMMAND,
+                                   admin_new_doc_title_handler)
                 ],
                 ADMIN_NEW_DOC_CONTENT: [
-                    MessageHandler(
-                        filters.TEXT & ~filters.COMMAND, admin_new_doc_content_handler
-                    )
+                    MessageHandler(filters.TEXT & ~filters.COMMAND,
+                                   admin_new_doc_content_handler)
                 ],
                 ADMIN_NEW_DOC_SOURCE: [
-                    MessageHandler(
-                        filters.TEXT & ~filters.COMMAND, admin_new_doc_source_handler
-                    )
+                    MessageHandler(filters.TEXT & ~filters.COMMAND,
+                                   admin_new_doc_source_handler)
                 ],
                 ADMIN_NEW_URL_DOC_URL: [
-                    MessageHandler(
-                        filters.TEXT & ~filters.COMMAND, admin_new_url_doc_url_handler
-                    )
+                    MessageHandler(filters.TEXT & ~filters.COMMAND,
+                                   admin_new_url_doc_url_handler)
                 ],
                 ADMIN_NEW_URL_DOC_TITLE: [
-                    MessageHandler(
-                        filters.TEXT & ~filters.COMMAND, admin_new_url_doc_title_handler
-                    )
+                    MessageHandler(filters.TEXT & ~filters.COMMAND,
+                                   admin_new_url_doc_title_handler)
                 ],
                 ADMIN_CHANNELS_ADD_USERNAME: [
-                    MessageHandler(
-                        filters.TEXT & ~filters.COMMAND,
-                        admin_channels_add_username_handler,
-                    )
+                    MessageHandler(filters.TEXT & ~filters.COMMAND,
+                                   admin_channels_add_username_handler)
                 ],
                 ADMIN_CHANNELS_REMOVE_USERNAME: [
-                    MessageHandler(
-                        filters.TEXT & ~filters.COMMAND,
-                        admin_channels_remove_username_handler,
-                    )
+                    MessageHandler(filters.TEXT & ~filters.COMMAND,
+                                   admin_channels_remove_username_handler)
                 ],
             },
             fallbacks=[
                 CommandHandler("cancel", admin_cancel_handler),
-                # Allow reset to exit admin conversation
                 CommandHandler("reset", reset_handler),
             ],
             name="admin_conversation",
             persistent=False,
         )
 
-        # IMPORTANT: ConversationHandler must be added BEFORE the general MessageHandler
-        # Add reset handler FIRST so it can work even if user is in a conversation
+        # Add handlers
         self.application.add_handler(CommandHandler("reset", reset_handler))
         self.application.add_handler(CommandHandler("start", start_handler))
         self.application.add_handler(CommandHandler("help", help_handler))
-
         self.application.add_handler(admin_conv)
         self.application.add_handler(
             CallbackQueryHandler(debug_callback_handler))
@@ -166,84 +151,41 @@ class SharifBot:
         logger.info("Starting bot polling...")
         self.application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-    async def setup_webhook(self) -> None:
-        """
-        Set up webhook mode (custom webhook setup).
-        This sets the webhook URL with Telegram but doesn't start a web server.
-        The webhook requests will be handled by Django views.
-        Note: Handlers should already be set up via start_application()
-        """
-        if not self.config.webhook_url:
-            logger.error("Webhook URL not provided in config.")
-            return
+    async def run_webhook(self) -> None:
+        """Run the bot in webhook mode."""
+        global _bot_event_loop
 
-        logger.info(f"Setting webhook URL: {self.config.webhook_url}")
-        try:
-            # Prepare webhook parameters
+        self.setup_handlers()
+
+        # Initialize and start the application
+        await self.application.initialize()
+        await self.application.start()
+
+        # Store event loop for webhook views
+        _bot_event_loop = asyncio.get_running_loop()
+
+        # Set webhook URL with Telegram
+        if self.config.webhook_url:
             webhook_params = {
                 "url": self.config.webhook_url,
                 "allowed_updates": Update.ALL_TYPES,
             }
-            # Add secret token if provided
             if self.config.webhook_secret_token:
                 webhook_params["secret_token"] = self.config.webhook_secret_token
-                logger.info("Webhook secret token configured")
 
-            result = await self.application.bot.set_webhook(**webhook_params)
-            logger.info(f"Webhook URL set successfully. Result: {result}")
+            await self.application.bot.set_webhook(**webhook_params)
 
-            # Verify webhook was set correctly
-            webhook_info = await self.application.bot.get_webhook_info()
-            logger.info(f"Webhook info - URL: {webhook_info.url}, "
-                        f"Pending updates: {webhook_info.pending_update_count}, "
-                        f"Last error: {webhook_info.last_error_message}")
+            # Verify webhook
+            info = await self.application.bot.get_webhook_info()
+            logger.info(
+                f"Webhook set: {info.url} (pending: {info.pending_update_count})")
 
-            if webhook_info.url != self.config.webhook_url:
-                logger.warning(f"Webhook URL mismatch! Expected: {self.config.webhook_url}, "
-                               f"Got: {webhook_info.url}")
-            else:
-                logger.info("✅ Webhook URL verified successfully")
+        logger.info("Bot application started and ready")
 
-        except Exception as e:
-            logger.error(f"Failed to set webhook: {e}", exc_info=True)
-            raise
-
-    async def start_application(self) -> None:
-        """Start the bot application (for custom webhook mode)."""
-        global _bot_event_loop, _bot_initialized
-        logger.info("Starting bot application...")
-        # Setup handlers before initializing
-        self.setup_handlers()
-        # Initialize the application first
-        await self.application.initialize()
-        # Then start it
-        await self.application.start()
-        # Store the event loop for use in webhook views
-        _bot_event_loop = asyncio.get_running_loop()
-        # Mark as initialized
-        _bot_initialized = True
-        logger.info("Bot application started and ready to receive updates")
-
-    async def stop_application(self) -> None:
+    async def stop(self) -> None:
         """Stop the bot application."""
-        logger.info("Stopping bot application...")
         try:
             await self.application.stop()
-            logger.info("Bot application stopped")
-        except RuntimeError as e:
-            # Ignore if application is not running
-            if "not running" not in str(e).lower():
-                raise
-            logger.warning("Bot application was not running")
-
-    async def shutdown_application(self) -> None:
-        """Shutdown the bot application."""
-        logger.info("Shutting down bot application...")
-        try:
             await self.application.shutdown()
-            logger.info("Bot application shut down")
-        except RuntimeError as e:
-            # Ignore if application is not initialized
-            if "not initialized" not in str(e).lower():
-                raise
-            logger.warning("Bot application was not initialized")
+        except Exception as e:
+            logger.error(f"Error stopping bot: {e}")

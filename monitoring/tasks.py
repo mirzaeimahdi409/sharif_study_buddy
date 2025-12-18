@@ -76,9 +76,22 @@ def harvest_channels_task():
     api_hash = settings.TELEGRAM_API_HASH
     session_name = 'telegram_session'
 
-    async def main():
+    # Create the Telegram client as in the official docs:
+    #   client = TelegramClient(name, api_id, api_hash)
+    client = TelegramClient(session_name, api_id, api_hash)
 
-        client = TelegramClient(session_name, api_id, api_hash)
+    async def main():
+        """
+        Use an already-authorized user session to harvest messages from channels.
+
+        This function assumes that the session file for `session_name` has been
+        created beforehand (for example by running a one-off script that calls
+        `client.start()` interactively, as shown in the Telethon quick-start).
+        In a non-interactive environment (Celery worker) we only connect and
+        check authorization; if the user is not authorized we log a message and
+        stop without prompting for phone or bot token.
+        See: https://docs.telethon.dev/en/stable/modules/client.html
+        """
         try:
             await client.connect()
 

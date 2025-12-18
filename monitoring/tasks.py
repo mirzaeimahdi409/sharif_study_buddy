@@ -38,6 +38,55 @@ def _content_hash(text: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def _clean_message_text(raw: str) -> str:
+    """
+    Clean Telegram message text before sending to RAG (channel-agnostic).
+
+    - Remove simple Markdown formatting (**bold**, __italic__, `code`)
+    - Strip common channel signatures like '🆔 @Something' یا خطوطی که فقط '@channel' هستند
+    - Collapse excessive blank lines and spaces
+    """
+    if not raw:
+        return ""
+
+    text = raw
+
+    import re
+
+    # Remove common channel tag / signature lines:
+    #  - lines that start with emojis then @username (e.g. "🆔 @SharifDaily")
+    #  - lines that are only @username
+    #  - lines like "channel: @something"
+    cleaned_lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        # pure @username
+        if re.fullmatch(r"@[\w\d_]+", stripped):
+            continue
+        # emoji(s) + @username, e.g. "🆔 @SharifDaily"
+        if re.fullmatch(r"[^\w@]*@[\w\d_]+", stripped):
+            continue
+        # patterns like "ID: @something" / "Channel: @something"
+        if re.fullmatch(r".{0,10}@[\w\d_]+", stripped):
+            # short label + handle, usually a footer
+            continue
+        cleaned_lines.append(line)
+    text = "\n".join(cleaned_lines)
+
+    # Remove basic markdown markers while keeping content
+    # **bold** or __italic__
+    text = re.sub(r"\*\*(.*?)\*\*", r"\1", text)
+    text = re.sub(r"__(.*?)__", r"\1", text)
+    # inline code `code`
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+
+    # Collapse 3+ newlines to max 2
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    # Trim trailing whitespace on each line
+    text = "\n".join(l.rstrip() for l in text.splitlines())
+    return text.strip()
+
+
 def ingest_message_to_kb(message: Message, channel_username: str):
     """
     Constructs and sends the message to the knowledge base API.
@@ -88,14 +137,17 @@ def ingest_message_to_kb(message: Message, channel_username: str):
                      "ingested_at", "last_error", "updated_at"])
             return
 
-    # Create a title from the first 100 characters of the message
-    title = message.text[:100] if len(message.text) > 100 else message.text
-    if len(message.text) > 100:
+    # Clean text before sending to RAG
+    cleaned_text = _clean_message_text(message.text or "")
+
+    # Create a title from the first 100 characters of the CLEANED message
+    title = cleaned_text[:100] if len(cleaned_text) > 100 else cleaned_text
+    if len(cleaned_text) > 100:
         title += "..."
 
     payload = {
         "title": title,
-        "text_content": message.text,
+        "text_content": cleaned_text,
         "published_at": message.date.isoformat(),
         "source_url": message_link,
         # Convert to string to match search format (RAG API expects consistent types)

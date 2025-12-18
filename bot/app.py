@@ -2,6 +2,7 @@ import logging
 import os
 import re
 import time
+import asyncio
 from dataclasses import dataclass
 
 from asgiref.sync import sync_to_async
@@ -9,6 +10,7 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.constants import ChatAction
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -840,6 +842,13 @@ class SharifBot:
             session.id,
             (user_text[:100] + "...") if len(user_text) > 100 else user_text,
         )
+        # Show "typing..." status in Telegram while we process the message
+        if update.effective_chat:
+            try:
+                await update.effective_chat.send_action(action=ChatAction.TYPING)
+            except Exception:
+                # Typing indicator failure should not break the main flow
+                logger.debug("Failed to send typing action", exc_info=True)
 
         try:
             start_time = time.time()

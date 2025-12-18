@@ -147,6 +147,47 @@ def reprocess_document_in_rag(self, document_id: int) -> dict:
         raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries))
 
 
+@shared_task(bind=True, max_retries=3)
+def delete_document_from_rag(self, external_id: str) -> dict:
+    """
+    Delete a document from RAG service asynchronously.
+
+    Args:
+        external_id: External ID of the document in RAG (usually stored on KnowledgeDocument.external_id)
+
+    Returns:
+        Dictionary with result status
+    """
+    try:
+        client = RAGClient()
+
+        import asyncio
+        asyncio.run(client.delete_document(doc_id=external_id))
+
+        logger.info(
+            f"Successfully deleted document with external_id={external_id} from RAG."
+        )
+
+        return {
+            "status": "success",
+            "external_id": external_id,
+        }
+
+    except RAGClientError as e:
+        error_msg = f"RAG client error: {str(e)}"
+        logger.error(
+            f"Error deleting document {external_id} from RAG: {error_msg}"
+        )
+        raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries))
+
+    except Exception as e:
+        error_msg = f"Unexpected error: {str(e)}"
+        logger.exception(
+            f"Unexpected error deleting document {external_id} from RAG: {error_msg}"
+        )
+        raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries))
+
+
 @shared_task
 def cleanup_old_chat_sessions(days_old: int = 90) -> dict:
     """

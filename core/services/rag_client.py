@@ -294,6 +294,42 @@ class RAGClient:
             logger.error(error_msg)
             raise RAGClientError(error_msg) from e
 
+    async def delete_document(self, doc_id: str) -> Dict[str, Any]:
+        """
+        Delete a document from the RAG system.
+
+        Args:
+            doc_id: Document ID to delete (usually external_id from RAG)
+
+        Returns:
+            Dictionary with delete result
+        """
+        url = f"{self.base_url}/knowledge/documents/{doc_id}/"
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"RAG delete document: {doc_id}")
+
+        try:
+            resp = await self._client.delete(url, headers=self._headers())
+            # Treat 404 as a successful "already deleted" case
+            if resp.status_code == 404:
+                logger.info(
+                    "RAG delete document: doc_id=%s already missing (404). Treating as success.",
+                    doc_id,
+                )
+                return {"status": "ok", "detail": "not_found_already_deleted"}
+
+            resp.raise_for_status()
+            return resp.json() if resp.text else {"status": "ok"}
+        except httpx.HTTPStatusError as e:
+            error_msg = f"Delete error {e.response.status_code}: {e.response.text[:200]}"
+            logger.error(error_msg)
+            raise RAGClientError(error_msg) from e
+        except httpx.RequestError as e:
+            error_msg = f"Request error during delete: {str(e)}"
+            logger.error(error_msg)
+            raise RAGClientError(error_msg) from e
+
     async def close(self):
         """Close the HTTP client."""
         await self._client.aclose()

@@ -125,14 +125,34 @@ def ingest_message_to_kb(message: Message, channel_username: str):
             timeout=30,
         )
         response.raise_for_status()
+
+        data = {}
+        try:
+            data = response.json() or {}
+        except ValueError:
+            data = {}
+
+        doc_id = data.get("id") or data.get("document_id")
+
         print(
-            f"✅ Successfully ingested message {message.id} from {channel_username}")
+            f"✅ Successfully ingested message {message.id} from {channel_username} "
+            f"(doc_id={doc_id})"
+        )
 
         rec.ingested = True
         rec.ingested_at = timezone.now()
         rec.last_error = None
-        rec.save(update_fields=["ingested",
-                 "ingested_at", "last_error", "updated_at"])
+        if doc_id:
+            rec.rag_document_id = str(doc_id)
+        rec.save(
+            update_fields=[
+                "ingested",
+                "ingested_at",
+                "last_error",
+                "rag_document_id",
+                "updated_at",
+            ]
+        )
     except requests.exceptions.RequestException as e:
         print(
             f"❌ Error ingesting message {message.id} from {channel_username}: {e}")

@@ -1,6 +1,7 @@
 from django.db import models
 from django.utils import timezone
 
+
 class MonitoredChannel(models.Model):
     """Represents a Telegram channel to be monitored for new messages."""
     username = models.CharField(
@@ -34,7 +35,15 @@ class IngestedTelegramMessage(models.Model):
     channel_username = models.CharField(max_length=100, db_index=True)
     message_id = models.BigIntegerField(db_index=True)
     source_url = models.URLField(blank=True, null=True)
-    content_hash = models.CharField(max_length=64, blank=True, null=True, db_index=True)
+    rag_document_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        db_index=True,
+        help_text="Document ID in RAG knowledge base (for deletion/reprocess)",
+    )
+    content_hash = models.CharField(
+        max_length=64, blank=True, null=True, db_index=True)
 
     ingested = models.BooleanField(default=False, db_index=True)
     attempts = models.PositiveIntegerField(default=0)

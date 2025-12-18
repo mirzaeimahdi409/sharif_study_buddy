@@ -51,7 +51,13 @@ class RAGClient:
             or os.getenv("RAG_DEFAULT_USER_ID")
             or "5"
         )
-        self.microservice = os.getenv("RAG_MICROSERVICE", "telegram_bot")
+        # Use Django settings first, then env, then default
+        # This ensures consistency with monitoring/tasks.py ingest
+        self.microservice = (
+            getattr(settings, "RAG_MICROSERVICE", None)
+            or os.getenv("RAG_MICROSERVICE")
+            or "telegram_bot"
+        )
         # Default retrieval score threshold (can be overridden via env)
         self.score_threshold = float(
             os.getenv("RETRIEVAL_SCORE_THRESHOLD", "0.25")
@@ -115,13 +121,23 @@ class RAGClient:
         if self.microservice:
             params["microservice"] = self.microservice
 
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "RAG search request: %s, query length=%s, user_id=%s, microservice=%s",
+        # Log exact payload for debugging (always, not just DEBUG level)
+        try:
+            import json
+            pretty_payload = json.dumps(payload, ensure_ascii=False, indent=2)
+            logger.info(
+                "🔍 RAG search payload:\n%s\nURL: %s\nQuery params: %s",
+                pretty_payload,
                 url,
-                len(query),
+                params,
+            )
+        except Exception:
+            logger.info(
+                "🔍 RAG search: query=%s, user_id=%s, microservice=%s, top_k=%s",
+                query[:100],
                 final_user_id,
                 self.microservice,
+                top_k,
             )
 
         try:

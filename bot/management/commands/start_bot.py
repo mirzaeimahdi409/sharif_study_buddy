@@ -129,9 +129,25 @@ class Command(BaseCommand):
                         "WEBHOOK_DOMAIN not configured for production")
                     return
 
-                webhook_url = f"https://{webhook_domain}/{token}"
+                # Get webhook path (defaults to /webhook)
+                webhook_path = TelegramConfig.get_webhook_path()
+                # Get secret token for webhook security (optional but recommended)
+                secret_token = TelegramConfig.get_webhook_secret_token()
+
+                # Build webhook URL (without token in path for better security)
+                webhook_url = f"https://{webhook_domain}{webhook_path}"
+
+                if secret_token:
+                    logger.info("Using secret token for webhook security")
+                else:
+                    logger.warning(
+                        "No secret token configured. Consider setting WEBHOOK_SECRET_TOKEN for better security.")
+
                 bot_config = SharifBotConfig(
-                    token=token, webhook_url=webhook_url)
+                    token=token,
+                    webhook_url=webhook_url,
+                    webhook_secret_token=secret_token
+                )
                 _bot_instance = SharifBot(bot_config)
 
                 logger.info(

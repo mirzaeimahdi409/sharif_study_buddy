@@ -17,12 +17,42 @@ Including another URLconf
 
 from django.contrib import admin
 from django.urls import path
+from django.conf import settings
+from decouple import config
 
 # Import webhook view
 from bot.views import telegram_webhook
 
+# Get webhook path from config (optional)
+
+
+def get_webhook_path():
+    """Get webhook path prefix from settings or env."""
+    path = getattr(settings, "WEBHOOK_PATH", None) or config(
+        "WEBHOOK_PATH", default="")
+    # Ensure path starts with / and doesn't end with /
+    if path and not path.startswith("/"):
+        path = "/" + path
+    if path.endswith("/"):
+        path = path.rstrip("/")
+    return path
+
+
+# Build URL patterns
 urlpatterns = [
     path("admin/", admin.site.urls),
-    # Telegram webhook endpoint - token will be part of the URL path
-    path("<str:token>/", telegram_webhook, name="telegram_webhook"),
 ]
+
+# Add webhook endpoint - use fixed path (no token in URL for better security)
+webhook_path = get_webhook_path()
+if webhook_path:
+    # Remove leading slash for Django path() function
+    path_pattern = webhook_path.lstrip("/")
+    urlpatterns.append(
+        path(f"{path_pattern}/", telegram_webhook, name="telegram_webhook")
+    )
+else:
+    # Fallback: webhook at root path
+    urlpatterns.append(
+        path("", telegram_webhook, name="telegram_webhook")
+    )

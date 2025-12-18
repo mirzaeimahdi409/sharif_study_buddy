@@ -65,6 +65,7 @@ class SharifBotConfig:
     """Configuration for SharifBot."""
     token: str
     webhook_url: str | None = None
+    webhook_secret_token: str | None = None
 
 
 class SharifBot:
@@ -172,10 +173,17 @@ class SharifBot:
 
         logger.info(f"Setting webhook URL: {self.config.webhook_url}")
         try:
-            result = await self.application.bot.set_webhook(
-                url=self.config.webhook_url,
-                allowed_updates=Update.ALL_TYPES,
-            )
+            # Prepare webhook parameters
+            webhook_params = {
+                "url": self.config.webhook_url,
+                "allowed_updates": Update.ALL_TYPES,
+            }
+            # Add secret token if provided
+            if self.config.webhook_secret_token:
+                webhook_params["secret_token"] = self.config.webhook_secret_token
+                logger.info("Webhook secret token configured")
+
+            result = await self.application.bot.set_webhook(**webhook_params)
             logger.info(f"Webhook URL set successfully. Result: {result}")
 
             # Verify webhook was set correctly

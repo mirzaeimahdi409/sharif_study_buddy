@@ -2,13 +2,45 @@
 import json
 import logging
 import asyncio
-from django.http import HttpRequest, HttpResponse, HttpResponseBadRequest
+import hmac
+from django.http import HttpRequest, HttpResponse, HttpResponseBadRequest, HttpResponseForbidden
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+from django.conf import settings
+from decouple import config
 
 from bot.app import get_bot_application
 
 logger = logging.getLogger(__name__)
+
+
+def verify_webhook_secret(request: HttpRequest) -> bool:
+    """
+    Verify webhook secret token from X-Telegram-Bot-Api-Secret-Token header.
+    Returns True if secret token is valid or not configured, False otherwise.
+    """
+    secret_token = getattr(settings, "WEBHOOK_SECRET_TOKEN", None) or config(
+        "WEBHOOK_SECRET_TOKEN", default=None
+    )
+
+    # If no secret token is configured, skip verification (less secure but works)
+    if not secret_token:
+        return True
+
+    # Get secret token from header
+    received_token = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+
+    # Use constant-time comparison to prevent timing attacks
+    if not received_token:
+        logger.warning("Webhook request missing secret token header")
+        return False
+
+    # Compare tokens using constant-time comparison
+    try:
+        return hmac.compare_digest(received_token, secret_token)
+    except Exception as e:
+        logger.error(f"Error verifying secret token: {e}")
+        return False
 
 
 @csrf_exempt
@@ -19,6 +51,11 @@ def telegram_webhook(request: HttpRequest) -> HttpResponse:
     This view receives updates from Telegram and puts them into the bot's update queue.
     """
     try:
+        # Verify secret token if configured
+        if not verify_webhook_secret(request):
+            logger.warning("Invalid webhook secret token")
+            return HttpResponseForbidden("Invalid secret token")
+
         # Get the bot application instance
         application = get_bot_application()
         if application is None:
@@ -37,7 +74,7 @@ def telegram_webhook(request: HttpRequest) -> HttpResponse:
         # Use the bot's event loop if available, otherwise try to schedule in current loop
         from bot.app import get_bot_event_loop
         bot_loop = get_bot_event_loop()
-        
+
         if bot_loop is not None and bot_loop.is_running():
             # Schedule the coroutine in the bot's event loop (thread-safe)
             future = asyncio.run_coroutine_threadsafe(
@@ -57,7 +94,8 @@ def telegram_webhook(request: HttpRequest) -> HttpResponse:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
-                    loop.run_until_complete(application.update_queue.put(update))
+                    loop.run_until_complete(
+                        application.update_queue.put(update))
                 finally:
                     loop.close()
 
@@ -70,4 +108,3 @@ def telegram_webhook(request: HttpRequest) -> HttpResponse:
     except Exception as e:
         logger.exception(f"Error processing webhook update: {e}")
         return HttpResponseBadRequest(f"Error processing update: {e}")
-

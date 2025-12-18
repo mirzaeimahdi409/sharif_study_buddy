@@ -63,6 +63,26 @@ class TelegramConfig:
             "WEBHOOK_DOMAIN", default=None
         )
 
+    @staticmethod
+    def get_webhook_path() -> str:
+        """Get webhook path prefix (optional). Defaults to '/webhook'."""
+        path = getattr(settings, "WEBHOOK_PATH", None) or config(
+            "WEBHOOK_PATH", default="/webhook"
+        )
+        # Ensure path starts with / and doesn't end with /
+        if path and not path.startswith("/"):
+            path = "/" + path
+        if path.endswith("/"):
+            path = path.rstrip("/")
+        return path
+
+    @staticmethod
+    def get_webhook_secret_token() -> Optional[str]:
+        """Get webhook secret token for security (optional but recommended)."""
+        return getattr(settings, "WEBHOOK_SECRET_TOKEN", None) or config(
+            "WEBHOOK_SECRET_TOKEN", default=None
+        )
+
 
 class RAGConfig:
     """RAG service configuration."""

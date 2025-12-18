@@ -228,6 +228,7 @@ The bot will automatically use webhook mode in production.
 4. Receive an answer based on university documents
 
 **Available Commands:**
+
 - `/start` - Start a conversation
 - `/help` - Show help message
 - `/reset` - Start a new conversation (clears context)
@@ -262,15 +263,15 @@ Admins can access the bot through two interfaces:
 
 ### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `CHAT_MAX_HISTORY` | Maximum number of messages in chat history | `8` |
-| `RAG_TOP_K` | Number of RAG results to retrieve | `5` |
-| `LLM_TEMPERATURE` | LLM temperature (creativity) | `0.2` |
-| `OPENROUTER_MODEL` | OpenRouter model to use | `openrouter/auto` |
-| `RETRIEVAL_SCORE_THRESHOLD` | Minimum score for RAG results | `0.25` |
-| `RAG_TIMEOUT` | RAG API timeout in seconds | `30` |
-| `TELEGRAM_DEDUP_BY_CONTENT` | Enable content-based deduplication | `False` |
+| Variable                    | Description                                | Default           |
+| --------------------------- | ------------------------------------------ | ----------------- |
+| `CHAT_MAX_HISTORY`          | Maximum number of messages in chat history | `8`               |
+| `RAG_TOP_K`                 | Number of RAG results to retrieve          | `5`               |
+| `LLM_TEMPERATURE`           | LLM temperature (creativity)               | `0.2`             |
+| `OPENROUTER_MODEL`          | OpenRouter model to use                    | `openrouter/auto` |
+| `RETRIEVAL_SCORE_THRESHOLD` | Minimum score for RAG results              | `0.25`            |
+| `RAG_TIMEOUT`               | RAG API timeout in seconds                 | `30`              |
+| `TELEGRAM_DEDUP_BY_CONTENT` | Enable content-based deduplication         | `False`           |
 
 ### RAG Service Configuration
 
@@ -299,15 +300,18 @@ The RAG microservice must be accessible at the URL specified in `RAG_API_URL`. T
 ### Adding New Features
 
 1. **Add a new model:**
+
    - Define the model in `core/models.py` or appropriate app
    - Create migration: `python manage.py makemigrations`
    - Apply migration: `python manage.py migrate`
 
 2. **Add a new bot command:**
+
    - Create handler in `bot/handlers/user_handlers.py` or `bot/handlers/admin_handlers.py`
    - Register in `bot/app.py` `setup_handlers()` method
 
 3. **Add a new Celery task:**
+
    - Add task function in `core/tasks.py` or appropriate app's `tasks.py`
    - Use `@shared_task` decorator
    - Task will be auto-discovered by Celery
@@ -332,6 +336,7 @@ pytest --cov=core --cov=bot --cov=monitoring
 ### Code Quality
 
 The project follows Python best practices:
+
 - Type hints throughout
 - Comprehensive docstrings
 - Modular architecture
@@ -347,6 +352,7 @@ docker-compose up -d
 ```
 
 This will start:
+
 - Application container (Django + Bot)
 - Celery worker container
 - Celery beat container

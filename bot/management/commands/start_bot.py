@@ -12,6 +12,45 @@ setup_logging(level="INFO", use_colors=True)
 logger = get_logger(__name__)
 
 
+def run_async(coro):
+    """
+    Run an async coroutine, handling both cases where an event loop
+    is already running or not.
+    """
+    try:
+        # Check if there's already a running event loop
+        loop = asyncio.get_running_loop()
+        # If we get here, there's a running loop
+        # We need to run in a separate thread with its own event loop
+        import threading
+
+        result = None
+        exception = None
+
+        def run_in_thread():
+            nonlocal result, exception
+            # Create a new event loop for this thread
+            new_loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(new_loop)
+            try:
+                result = new_loop.run_until_complete(coro)
+            except Exception as e:
+                exception = e
+            finally:
+                new_loop.close()
+
+        thread = threading.Thread(target=run_in_thread, daemon=False)
+        thread.start()
+        thread.join()
+
+        if exception:
+            raise exception
+        return result
+    except RuntimeError:
+        # No running loop, safe to use asyncio.run()
+        asyncio.run(coro)
+
+
 class Command(BaseCommand):
     help = 'Starts the Telegram bot in polling or webhook mode'
 
@@ -49,7 +88,7 @@ class Command(BaseCommand):
                     f'✅ Bot is starting in webhook mode. URL: {webhook_url}'))
 
                 # Run the async webhook setup
-                asyncio.run(bot.run_webhook())
+                run_async(bot.run_webhook())
 
             else:
                 # --- Polling Mode ---

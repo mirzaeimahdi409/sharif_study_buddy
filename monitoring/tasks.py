@@ -50,7 +50,9 @@ def ingest_message_to_kb(message: Message, channel_username: str):
         "published_at": message.date.isoformat(),
         "source_url": message_link,
         "user_id": settings.RAG_USER_ID,
-        "microservice": "telegram_harvester",
+        # Must be one of the allowed values from the RAG API:
+        #   support_assistant, telegram_bot
+        "microservice": "telegram_bot",
         "metadata": {
             "source": "telegram_channel",
             "channel": channel_username,

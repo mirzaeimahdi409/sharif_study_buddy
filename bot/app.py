@@ -48,11 +48,17 @@ logger = logging.getLogger(__name__)
 # Global variables to store the bot application instance and event loop for webhook access
 _bot_application: Application | None = None
 _bot_event_loop: asyncio.AbstractEventLoop | None = None
+_bot_initialized: bool = False
 
 
 def get_bot_application() -> Application | None:
     """Get the global bot application instance."""
     return _bot_application
+
+
+def is_bot_initialized() -> bool:
+    """Check if bot application is initialized and ready."""
+    return _bot_initialized
 
 
 def get_bot_event_loop() -> asyncio.AbstractEventLoop | None:
@@ -204,7 +210,7 @@ class SharifBot:
 
     async def start_application(self) -> None:
         """Start the bot application (for custom webhook mode)."""
-        global _bot_event_loop
+        global _bot_event_loop, _bot_initialized
         logger.info("Starting bot application...")
         # Setup handlers before initializing
         self.setup_handlers()
@@ -214,7 +220,9 @@ class SharifBot:
         await self.application.start()
         # Store the event loop for use in webhook views
         _bot_event_loop = asyncio.get_running_loop()
-        logger.info("Bot application started")
+        # Mark as initialized
+        _bot_initialized = True
+        logger.info("Bot application started and ready to receive updates")
 
     async def stop_application(self) -> None:
         """Stop the bot application."""

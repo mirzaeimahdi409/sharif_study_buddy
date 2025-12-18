@@ -167,9 +167,23 @@ class Command(BaseCommand):
                 thread = threading.Thread(
                     target=run_async_application,
                     args=(_bot_instance,),
-                    daemon=True
+                    daemon=True,
+                    name="TelegramBotThread"
                 )
                 thread.start()
+                logger.info(
+                    f"Bot thread started: {thread.name} (daemon={thread.daemon})")
+
+                # Give the thread a moment to start initializing
+                import time
+                time.sleep(0.5)
+
+                # Check if thread is still alive
+                if not thread.is_alive():
+                    logger.error("Bot thread died immediately after start!")
+                    self.stdout.write(self.style.ERROR(
+                        '❌ Bot thread failed to start. Check logs for errors.'))
+                    return
 
                 # Wait for the thread (or until interrupted)
                 try:

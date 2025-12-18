@@ -57,10 +57,27 @@ def telegram_webhook(request: HttpRequest) -> HttpResponse:
             return HttpResponseForbidden("Invalid secret token")
 
         # Get the bot application instance
+        from bot.app import is_bot_initialized
         application = get_bot_application()
+
         if application is None:
-            logger.error("Bot application not initialized")
+            logger.error(
+                "Bot application not initialized - application instance is None")
             return HttpResponseBadRequest("Bot application not initialized")
+
+        if not is_bot_initialized():
+            logger.warning(
+                "Bot application instance exists but not fully initialized yet. Waiting...")
+            # Wait a bit for initialization (max 5 seconds)
+            import time
+            for _ in range(50):  # 50 * 0.1 = 5 seconds max wait
+                time.sleep(0.1)
+                if is_bot_initialized():
+                    logger.info("Bot application is now initialized")
+                    break
+            else:
+                logger.error("Bot application initialization timeout")
+                return HttpResponseBadRequest("Bot application initialization timeout")
 
         # Parse the JSON body
         body = request.body.decode('utf-8')

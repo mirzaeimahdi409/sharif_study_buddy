@@ -1,11 +1,14 @@
 import asyncio
+import hashlib
+import re
 import requests
 from celery import shared_task
 from django.conf import settings
+from django.utils import timezone
 from telethon import TelegramClient
 from telethon.tl.types import Message
 
-from .models import MonitoredChannel
+from .models import MonitoredChannel, IngestedTelegramMessage
 
 # --- Smart Filtering (same as before) ---
 
@@ -24,6 +27,16 @@ def is_message_relevant(message: Message) -> bool:
 # --- API Ingestion (same as before) ---
 
 
+def _normalize_text(text: str) -> str:
+    # Collapse whitespace and trim; keep case (Persian) as-is.
+    return re.sub(r"\s+", " ", (text or "").strip())
+
+
+def _content_hash(text: str) -> str:
+    normalized = _normalize_text(text)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
 def ingest_message_to_kb(message: Message, channel_username: str):
     """
     Constructs and sends the message to the knowledge base API.
@@ -38,6 +51,41 @@ def ingest_message_to_kb(message: Message, channel_username: str):
     - metadata (optional): Additional JSON metadata
     """
     message_link = f"https://t.me/{channel_username}/{message.id}"
+    external_id = f"telegram:{channel_username}:{message.id}"
+    content_hash = _content_hash(message.text or "")
+
+    # ---- Deduplication guard ----
+    # 1) Strong dedupe by external_id (channel + message_id)
+    # 2) Optional content-based dedupe (same normalized text) across all channels
+    #    Enable by setting TELEGRAM_DEDUP_BY_CONTENT=1 in env.
+    rec, created = IngestedTelegramMessage.objects.get_or_create(
+        external_id=external_id,
+        defaults={
+            "channel_username": channel_username,
+            "message_id": int(message.id),
+            "source_url": message_link,
+            "content_hash": content_hash,
+        },
+    )
+
+    if rec.ingested:
+        # Already ingested successfully.
+        return
+
+    dedup_by_content = str(getattr(settings, "TELEGRAM_DEDUP_BY_CONTENT", "") or "").lower() in (
+        "1", "true", "yes", "on"
+    )
+    if dedup_by_content:
+        if IngestedTelegramMessage.objects.filter(
+            content_hash=content_hash, ingested=True
+        ).exclude(external_id=external_id).exists():
+            # Mark as "ingested" to avoid rechecking every run, but keep note.
+            rec.ingested = True
+            rec.ingested_at = timezone.now()
+            rec.last_error = "Skipped due to duplicate content hash."
+            rec.save(update_fields=["ingested",
+                     "ingested_at", "last_error", "updated_at"])
+            return
 
     # Create a title from the first 100 characters of the message
     title = message.text[:100] if len(message.text) > 100 else message.text
@@ -58,22 +106,46 @@ def ingest_message_to_kb(message: Message, channel_username: str):
             "channel": channel_username,
             "message_id": message.id,
             "message_date": message.date.isoformat(),
+            "external_id": external_id,
         }
     }
 
     try:
+        rec.attempts = (rec.attempts or 0) + 1
+        rec.last_attempt_at = timezone.now()
+        rec.source_url = message_link
+        rec.content_hash = content_hash
+        rec.save(update_fields=["attempts", "last_attempt_at",
+                 "source_url", "content_hash", "updated_at"])
+
         response = requests.post(
             settings.RAG_API_URL + '/knowledge/documents/ingest-channel-message/',
-            json=payload
+            json=payload,
+            timeout=30,
         )
         response.raise_for_status()
         print(
             f"✅ Successfully ingested message {message.id} from {channel_username}")
+
+        rec.ingested = True
+        rec.ingested_at = timezone.now()
+        rec.last_error = None
+        rec.save(update_fields=["ingested",
+                 "ingested_at", "last_error", "updated_at"])
     except requests.exceptions.RequestException as e:
         print(
             f"❌ Error ingesting message {message.id} from {channel_username}: {e}")
-        if hasattr(e.response, 'text'):
-            print(f"   Response: {e.response.text}")
+        resp_text = None
+        if hasattr(e, "response") and e.response is not None:
+            try:
+                resp_text = e.response.text
+            except Exception:
+                resp_text = None
+        if resp_text:
+            print(f"   Response: {resp_text}")
+
+        rec.last_error = f"{e} | response={resp_text}" if resp_text else str(e)
+        rec.save(update_fields=["last_error", "updated_at"])
 
 # --- Main Celery Task ---
 

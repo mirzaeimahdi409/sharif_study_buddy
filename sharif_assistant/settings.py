@@ -27,6 +27,8 @@ SECRET_KEY = config("SECRET_KEY")
 TELEGRAM_BOT_TOKEN = config("TELEGRAM_BOT_TOKEN", default=None)
 TELEGRAM_API_ID = config("TELEGRAM_API_ID", default=None, cast=int)
 TELEGRAM_API_HASH = config("TELEGRAM_API_HASH", default=None)
+# Harvester deduplication: skip ingesting messages whose normalized text was already ingested
+TELEGRAM_DEDUP_BY_CONTENT = config("TELEGRAM_DEDUP_BY_CONTENT", default=False, cast=bool)
 
 
 # AI Services

@@ -31,7 +31,13 @@ django.setup()
 async def main():
     api_id = settings.TELEGRAM_API_ID
     api_hash = settings.TELEGRAM_API_HASH
-    session_name = "telegram_session"  # Must match monitoring/tasks.py
+
+    # Create sessions directory if it doesn't exist
+    sessions_dir = os.path.join(os.path.dirname(__file__), "sessions")
+    os.makedirs(sessions_dir, exist_ok=True)
+
+    # Session file path - must match monitoring/tasks.py
+    session_path = os.path.join(sessions_dir, "telegram_session")
 
     if not api_id or not api_hash:
         print(
@@ -42,9 +48,9 @@ async def main():
     print("Telegram Session Creator")
     print("=" * 60)
     print(f"\nUsing API ID: {api_id}")
-    print(f"Session name: {session_name}\n")
+    print(f"Session path: {session_path}\n")
 
-    client = TelegramClient(session_name, api_id, api_hash)
+    client = TelegramClient(session_path, api_id, api_hash)
 
     # Start the client interactively
     # This will prompt for phone number and login code
@@ -58,7 +64,7 @@ async def main():
     print(f"Logged in as: {me.first_name} {me.last_name or ''}")
     print(f"Username: @{me.username}" if me.username else "No username")
     print(f"Phone: {me.phone}\n")
-    print(f"Session file '{session_name}.session' has been created.")
+    print(f"Session file saved at: {session_path}.session")
     print("You can now restart your Celery worker and it will use this session.")
     print("=" * 60)
 

@@ -25,28 +25,53 @@ def is_message_relevant(message: Message) -> bool:
 
 
 def ingest_message_to_kb(message: Message, channel_username: str):
-    """Constructs and sends the message to the knowledge base API."""
+    """
+    Constructs and sends the message to the knowledge base API.
+
+    Uses the /api/knowledge/documents/ingest-channel-message/ endpoint which accepts:
+    - title (required): Title for the message document
+    - text_content (required): The full text content of the message
+    - published_at (required): The original publication timestamp (ISO 8601 format)
+    - source_url (required): A direct URL to the original message for citation
+    - user_id (required): Owner user ID for access control
+    - microservice (optional): Microservice name for scoping
+    - metadata (optional): Additional JSON metadata
+    """
     message_link = f"https://t.me/{channel_username}/{message.id}"
+
+    # Create a title from the first 100 characters of the message
+    title = message.text[:100] if len(message.text) > 100 else message.text
+    if len(message.text) > 100:
+        title += "..."
+
     payload = {
-        "document": {
-            "text": message.text,
-            "metadata": {
-                "source": "telegram_channel",
-                "channel": channel_username,
-                "message_id": message.id,
-                "message_link": message_link,
-                "timestamp": message.date.isoformat(),
-            }
+        "title": title,
+        "text_content": message.text,
+        "published_at": message.date.isoformat(),
+        "source_url": message_link,
+        "user_id": settings.RAG_USER_ID,
+        "microservice": "telegram_harvester",
+        "metadata": {
+            "source": "telegram_channel",
+            "channel": channel_username,
+            "message_id": message.id,
+            "message_date": message.date.isoformat(),
         }
     }
+
     try:
         response = requests.post(
-            settings.RAG_API_URL + '/documents/ingest-channel-message/', json=payload)
+            settings.RAG_API_URL + '/knowledge/documents/ingest-channel-message/',
+            json=payload
+        )
         response.raise_for_status()
         print(
-            f"Successfully ingested message {message.id} from {channel_username}")
+            f"✅ Successfully ingested message {message.id} from {channel_username}")
     except requests.exceptions.RequestException as e:
-        print(f"Error ingesting message {message.id}: {e}")
+        print(
+            f"❌ Error ingesting message {message.id} from {channel_username}: {e}")
+        if hasattr(e.response, 'text'):
+            print(f"   Response: {e.response.text}")
 
 # --- Main Celery Task ---
 
@@ -74,16 +99,20 @@ def harvest_channels_task():
     # Get Telegram credentials from Django settings
     api_id = settings.TELEGRAM_API_ID
     api_hash = settings.TELEGRAM_API_HASH
-    session_name = 'telegram_session'
 
     if not api_id or not api_hash:
         print("❌ TELEGRAM_API_ID / TELEGRAM_API_HASH are not configured. Exiting.")
         return
 
+    # Session file path (must match create_telegram_session.py)
+    import os
+    session_path = os.path.join(os.path.dirname(
+        __file__), '..', 'sessions', 'telegram_session')
+
     # Create the Telegram client as in the official docs:
     #   client = TelegramClient('session_name', api_id, api_hash)
     # See: https://docs.telethon.dev/en/stable/basic/quick-start.html
-    client = TelegramClient(session_name, api_id, api_hash)
+    client = TelegramClient(session_path, api_id, api_hash)
 
     async def main():
         """

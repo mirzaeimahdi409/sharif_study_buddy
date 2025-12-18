@@ -56,6 +56,10 @@ Thumbs.db
 .env.*
 !.env.example
 
+# Telethon session files (contain sensitive auth data)
+sessions/*.session
+sessions/*.session-journal
+
 # Pytest / coverage
 .pytest_cache/
 .coverage

@@ -74,49 +74,39 @@ def harvest_channels_task():
     # Get Telegram credentials from Django settings
     api_id = settings.TELEGRAM_API_ID
     api_hash = settings.TELEGRAM_API_HASH
-    bot_token = settings.TELEGRAM_BOT_TOKEN
+    session_name = 'telegram_session'
 
     if not api_id or not api_hash:
-        print("TELEGRAM_API_ID / TELEGRAM_API_HASH are not configured. Exiting.")
+        print("❌ TELEGRAM_API_ID / TELEGRAM_API_HASH are not configured. Exiting.")
         return
 
-    if not bot_token:
-        print("TELEGRAM_BOT_TOKEN is not configured. Exiting.")
-        return
-
-    # Use a session name as in the official Telethon docs:
+    # Create the Telegram client as in the official docs:
     #   client = TelegramClient('session_name', api_id, api_hash)
-    # Here we authenticate as a **bot** (no phone number) using:
-    #   await client.start(bot_token=...)
-    session_name = 'telegram_bot_session'
-
+    # See: https://docs.telethon.dev/en/stable/basic/quick-start.html
     client = TelegramClient(session_name, api_id, api_hash)
 
     async def main():
         """
-        Use a **bot session** (no phone number) to harvest messages from channels.
+        Use an already-authorized user session to harvest messages from channels.
 
-        As shown in the Telethon README
-        (`https://github.com/LonamiWebs/Telethon`), the recommended pattern is:
+        This function assumes that the session file for `session_name` has been
+        created beforehand by running `python create_telegram_session.py` once
+        (which calls client.start() interactively with your phone number).
 
-            from telethon import TelegramClient
-            client = TelegramClient('session_name', api_id, api_hash)
-            client.start()
-
-        For bots, Telethon also supports:
-
-            client = TelegramClient('session_name', api_id, api_hash)
-            client.start(bot_token='YOUR_BOT_TOKEN')
-
-        We follow the same approach here, but in an async Celery task:
-        create the client once and then call `await client.start(bot_token=...)`
-        so no interactive phone/OTP flow is needed, and the same `api_id` /
-        `api_hash` pair is reused for the bot.
+        In a non-interactive environment (Celery worker) we only connect and
+        check authorization; if the user is not authorized we log a message and
+        stop without prompting for phone or code.
         """
         try:
-            # This will authorize the bot using the configured token and will
-            # also create/update the local session file `telegram_bot_session.session`.
-            await client.start(bot_token=bot_token)
+            await client.connect()
+
+            if not await client.is_user_authorized():
+                print(
+                    "❌ Telegram session is not authorized. "
+                    "Please run 'python create_telegram_session.py' once to create the session file, "
+                    "then restart the worker."
+                )
+                return
 
             tasks = [
                 _harvest_channel_async(client, username) for username in channels

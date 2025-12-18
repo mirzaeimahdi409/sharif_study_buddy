@@ -77,10 +77,25 @@ def harvest_channels_task():
     session_name = 'telegram_session'
 
     async def main():
-        async with TelegramClient(session_name, api_id, api_hash) as client:
-            tasks = [_harvest_channel_async(
-                client, username) for username in channels]
+
+        client = TelegramClient(session_name, api_id, api_hash)
+        try:
+            await client.connect()
+
+            if not await client.is_user_authorized():
+                print(
+                    "Telegram session is not authorized. "
+                    "Please create it once manually using Telethon (client.start(phone=...)) "
+                    "so that 'telegram_session' is stored, then rerun the worker."
+                )
+                return
+
+            tasks = [
+                _harvest_channel_async(client, username) for username in channels
+            ]
             await asyncio.gather(*tasks)
+        finally:
+            await client.disconnect()
 
     # Run the async main function
     asyncio.run(main())

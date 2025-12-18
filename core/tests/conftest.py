@@ -41,4 +41,3 @@ def knowledge_document():
         content="This is a test document content.",
         source_url="https://example.com/test",
     )
-

@@ -171,11 +171,28 @@ class SharifBot:
             return
 
         logger.info(f"Setting webhook URL: {self.config.webhook_url}")
-        await self.application.bot.set_webhook(
-            url=self.config.webhook_url,
-            allowed_updates=Update.ALL_TYPES,
-        )
-        logger.info("Webhook URL set successfully")
+        try:
+            result = await self.application.bot.set_webhook(
+                url=self.config.webhook_url,
+                allowed_updates=Update.ALL_TYPES,
+            )
+            logger.info(f"Webhook URL set successfully. Result: {result}")
+
+            # Verify webhook was set correctly
+            webhook_info = await self.application.bot.get_webhook_info()
+            logger.info(f"Webhook info - URL: {webhook_info.url}, "
+                        f"Pending updates: {webhook_info.pending_update_count}, "
+                        f"Last error: {webhook_info.last_error_message}")
+
+            if webhook_info.url != self.config.webhook_url:
+                logger.warning(f"Webhook URL mismatch! Expected: {self.config.webhook_url}, "
+                               f"Got: {webhook_info.url}")
+            else:
+                logger.info("✅ Webhook URL verified successfully")
+
+        except Exception as e:
+            logger.error(f"Failed to set webhook: {e}", exc_info=True)
+            raise
 
     async def start_application(self) -> None:
         """Start the bot application (for custom webhook mode)."""

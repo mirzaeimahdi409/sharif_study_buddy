@@ -48,8 +48,9 @@ ADMIN_TELEGRAM_IDS = config("ADMIN_TELEGRAM_IDS", default="")
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
-
-ALLOWED_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0"]
+# Allowed hosts for the Django development server from environment variable
+ALLOWED_HOSTS = config(
+    "ALLOWED_HOSTS", default="localhost,127.0.0.1,0.0.0.0", cast=list)
 
 
 # Application definition

@@ -804,9 +804,14 @@ class SharifBot:
             context.user_data.clear()
 
         session = await _get_profile_and_session(update)
+        # Deactivate current session in a background thread
         await sync_to_async(ChatSession.objects.filter(id=session.id).update)(is_active=False)
+        # Avoid touching the related object in async context (would trigger a sync DB query)
+        # Use the foreign key ID instead, which is already on the model instance.
         new_session = ChatSession(
-            user_profile=session.user_profile, is_active=True)
+            user_profile_id=session.user_profile_id,
+            is_active=True,
+        )
         await sync_to_async(new_session.save)()
 
         logger.info(

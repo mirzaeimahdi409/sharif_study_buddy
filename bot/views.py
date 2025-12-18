@@ -103,18 +103,21 @@ def telegram_webhook(request: HttpRequest) -> HttpResponse:
         bot_loop = get_bot_event_loop()
 
         if bot_loop is not None and bot_loop.is_running():
-            # Schedule the coroutine in the bot's event loop (thread-safe)
+            # Process update directly using application.process_update()
+            # This is the recommended way for custom webhook setups
             try:
+                # Use process_update instead of putting in queue
+                # This ensures the update is processed immediately
                 future = asyncio.run_coroutine_threadsafe(
-                    application.update_queue.put(update),
+                    application.process_update(update),
                     bot_loop
                 )
                 # Don't wait for completion to avoid blocking the request
                 # The future will complete asynchronously
-                logger.debug(f"Update {update.update_id} queued successfully")
+                logger.debug(f"Update {update.update_id} processing started")
             except Exception as e:
                 logger.error(
-                    f"Failed to queue update {update.update_id}: {e}", exc_info=True)
+                    f"Failed to process update {update.update_id}: {e}", exc_info=True)
                 # Return 200 to avoid Telegram retries
                 return HttpResponse(status=200)
         else:
@@ -122,14 +125,22 @@ def telegram_webhook(request: HttpRequest) -> HttpResponse:
             try:
                 loop = asyncio.get_running_loop()
                 # If we have a running loop, schedule the coroutine
-                asyncio.create_task(application.update_queue.put(update))
+                asyncio.create_task(application.process_update(update))
+                logger.debug(
+                    f"Update {update.update_id} processing scheduled in current loop")
             except RuntimeError:
                 # No running loop, create one and run
+                logger.warning(
+                    "No running event loop, creating new one for update processing")
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
-                    loop.run_until_complete(
-                        application.update_queue.put(update))
+                    loop.run_until_complete(application.process_update(update))
+                    logger.debug(
+                        f"Update {update.update_id} processed in new loop")
+                except Exception as e:
+                    logger.error(
+                        f"Error processing update in new loop: {e}", exc_info=True)
                 finally:
                     loop.close()
 

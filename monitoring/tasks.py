@@ -78,16 +78,14 @@ def harvest_channels_task():
 
     async def main():
         client = TelegramClient(session_name, api_id, api_hash)
-        if not await client.is_user_authorized():
-            await client.start(phone=settings.TELEGRAM_PHONE, bot_token=None)
-        else:
-            await client.connect()
         try:
-            async with client:
-                tasks = [_harvest_channel_async(
-                    client, username) for username in channels]
-                await asyncio.gather(*tasks)
+            # The start() method will connect, log in if needed, and authorize.
+            await client.start(phone=settings.TELEGRAM_PHONE)
+            tasks = [_harvest_channel_async(
+                client, username) for username in channels]
+            await asyncio.gather(*tasks)
         finally:
+            # Ensure the client is disconnected.
             await client.disconnect()
 
     # Run the async main function

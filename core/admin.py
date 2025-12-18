@@ -1,7 +1,8 @@
 import logging
 from django.contrib import admin
 from .models import UserProfile, ChatSession, ChatMessage, KnowledgeDocument
-from .services.rag_client import RAGClient, RAGClientError
+from .services.rag_client import RAGClient
+from .exceptions import RAGServiceError
 from django.contrib import messages
 
 logger = logging.getLogger(__name__)

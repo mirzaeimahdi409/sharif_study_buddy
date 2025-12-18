@@ -4,12 +4,13 @@ Provides OpenRouterLLM class that wraps ChatOpenAI for OpenRouter API.
 """
 import os
 import logging
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from langchain_openai import ChatOpenAI
 from langchain_core.language_models.llms import LLM
 from langchain_core.callbacks.manager import CallbackManagerForLLMRun
-from django.conf import settings
+from langchain_core.messages import BaseMessage
 from pydantic.v1 import PrivateAttr
+from core.config import LLMConfig
 
 logger = logging.getLogger(__name__)
 
@@ -31,16 +32,14 @@ class OpenRouterLLM(LLM):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "openai/gpt-3.5-turbo",
-        temperature: float = 0.2,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
         streaming: bool = False,
         **kwargs
     ):
-        resolved_api_key = (
-            api_key
-            or getattr(settings, "OPENROUTER_API_KEY", None)
-            or os.getenv("OPENROUTER_API_KEY", "")
-        )
+        resolved_api_key = api_key or LLMConfig.get_api_key()
+        resolved_model = model or LLMConfig.get_model()
+        resolved_temperature = temperature if temperature is not None else LLMConfig.get_temperature()
         resolved_base_url = kwargs.pop(
             "base_url",
             os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
@@ -49,8 +48,8 @@ class OpenRouterLLM(LLM):
         # IMPORTANT: pass fields into the Pydantic/LangChain constructor
         super().__init__(
             api_key=resolved_api_key,
-            model=model,
-            temperature=temperature,
+            model=resolved_model,
+            temperature=resolved_temperature,
             streaming=streaming,
             base_url=resolved_base_url,
             **kwargs,
@@ -97,12 +96,17 @@ class OpenRouterLLM(LLM):
         response = await self._chat_model.ainvoke(messages)
         return response.content
 
-    def invoke(self, messages: List[Dict[str, str]], **kwargs: Any) -> Any:
+    def invoke(
+        self,
+        messages: Union[List[Dict[str, str]], List[BaseMessage]],
+        **kwargs: Any
+    ) -> BaseMessage:
         """
         Invoke the chat model with messages synchronously.
 
         Args:
             messages: List of message dictionaries with 'role' and 'content' keys
+                     or list of BaseMessage objects
             **kwargs: Additional arguments to pass to the chat model
 
         Returns:
@@ -113,12 +117,17 @@ class OpenRouterLLM(LLM):
                 f"Invoking LLM with {len(messages)} messages, model: {self.model}")
         return self._chat_model.invoke(messages, **kwargs)
 
-    async def ainvoke(self, messages: List[Dict[str, str]], **kwargs: Any) -> Any:
+    async def ainvoke(
+        self,
+        messages: Union[List[Dict[str, str]], List[BaseMessage]],
+        **kwargs: Any
+    ) -> BaseMessage:
         """
         Async invoke the chat model with messages.
 
         Args:
             messages: List of message dictionaries with 'role' and 'content' keys
+                     or list of BaseMessage objects
             **kwargs: Additional arguments to pass to the chat model
 
         Returns:

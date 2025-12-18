@@ -1,13 +1,12 @@
 import logging
 from typing import Iterable
 
-from django.conf import settings
 from django.db.models.signals import pre_delete
 from django.dispatch import receiver
 
 from .models import MonitoredChannel, IngestedTelegramMessage
-
-import requests
+from core.services.rag_client import RAGClient
+from core.exceptions import RAGServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -16,51 +15,29 @@ def _delete_rag_documents(doc_ids: Iterable[str]) -> None:
     """
     Best-effort deletion of documents from the RAG service.
 
-    Uses the DELETE /knowledge/documents/{id}/ endpoint for each id.
-    Failures are logged but do not block channel deletion.
+    Uses RAGClient to delete documents. Failures are logged but do not block channel deletion.
     """
-    base_url = getattr(settings, "RAG_API_URL", "").rstrip("/")
-    if not base_url:
+    try:
+        client = RAGClient()
+    except RAGServiceError as e:
         logger.warning(
-            "RAG_API_URL is not configured; skipping RAG deletions.")
+            "RAGClient initialization failed; skipping RAG deletions: %s", e
+        )
         return
-
-    headers = {}
-    rag_api_key = getattr(settings, "RAG_API_KEY", None)
-    if rag_api_key:
-        headers["Authorization"] = f"Bearer {rag_api_key}"
-
-    # RAG delete endpoint expects user_id (and often microservice) as query params.
-    # Keep them consistent with what we use for ingest/search.
-    user_id = str(getattr(settings, "RAG_USER_ID", "") or "")
-    microservice = getattr(settings, "RAG_MICROSERVICE",
-                           None) or "telegram_bot"
-    base_params = {}
-    if user_id:
-        base_params["user_id"] = user_id
-    if microservice:
-        base_params["microservice"] = microservice
 
     for doc_id in doc_ids:
         if not doc_id:
             continue
-        url = f"{base_url}/knowledge/documents/{doc_id}/"
         try:
-            resp = requests.delete(
-                url,
-                headers=headers,
-                params=base_params,
-                timeout=10,
-            )
-            if resp.status_code not in (200, 204, 404):
-                logger.warning(
-                    "Unexpected status when deleting RAG document %s: %s %s",
-                    doc_id,
-                    resp.status_code,
-                    resp.text[:200],
-                )
-        except requests.RequestException as e:
+            client.delete_document_sync(doc_id)
+            logger.debug("Successfully deleted RAG document %s", doc_id)
+        except RAGServiceError as e:
+            # RAGClient already handles 404 as success, so this is for other errors
             logger.warning("Failed to delete RAG document %s: %s", doc_id, e)
+        except Exception as e:
+            logger.warning(
+                "Unexpected error deleting RAG document %s: %s", doc_id, e
+            )
 
 
 @receiver(pre_delete, sender=MonitoredChannel)

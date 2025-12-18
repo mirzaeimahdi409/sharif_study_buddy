@@ -1,30 +1,31 @@
-import os
 import logging
-from typing import Dict, List, TypedDict, Tuple
+from typing import Dict, List, TypedDict, Tuple, Any
 from urllib.parse import urlparse
 from langgraph.graph import StateGraph, START, END
-from django.conf import settings
 from core.services.openrouter import OpenRouterLLM
-from core.services.rag_client import RAGClient, RAGClientError
+from core.services.rag_client import RAGClient
+from core.exceptions import RAGServiceError
 from core.models import ChatSession, ChatMessage
+from core.config import ChatConfig, LLMConfig
 from asgiref.sync import sync_to_async
 from django.utils import timezone
 from core import messages
 
 logger = logging.getLogger(__name__)
 
-MAX_HISTORY = int(os.getenv("CHAT_MAX_HISTORY", "8"))
-TOP_K = int(os.getenv("RAG_TOP_K", "5"))
-TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.2"))
-MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/auto")
+MAX_HISTORY = ChatConfig.get_max_history()
+TOP_K = ChatConfig.get_rag_top_k()
+TEMPERATURE = LLMConfig.get_temperature()
+MODEL = LLMConfig.get_model()
 
 
 class GraphState(TypedDict):
+    """State dictionary for LangGraph pipeline."""
     question: str
     history: List[Dict[str, str]]
     context: str
     answer: str
-    debug: Dict
+    debug: Dict[str, Any]
 
 
 async def _history(session: ChatSession) -> List[Dict[str, str]]:
@@ -145,7 +146,7 @@ async def retrieve_node(state: GraphState) -> GraphState:
 
             snippets.append("\n".join(snippet_parts))
 
-    except RAGClientError as e:
+    except RAGServiceError as e:
         snippets.append(messages.RAG_SERVICE_UNAVAILABLE.format(error=e))
 
     # Format context with clear separation between documents
@@ -163,12 +164,7 @@ async def retrieve_node(state: GraphState) -> GraphState:
 
 
 async def generate_node(state: GraphState) -> GraphState:
-    api_key = settings.OPENROUTER_API_KEY or os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        raise RuntimeError(messages.OPENROUTER_API_KEY_ERROR)
-
     llm = OpenRouterLLM(
-        api_key=api_key,
         model=MODEL,
         temperature=TEMPERATURE,
         streaming=False,

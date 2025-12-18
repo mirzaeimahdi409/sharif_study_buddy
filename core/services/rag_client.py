@@ -2,14 +2,13 @@ import os
 import logging
 from typing import Any, Dict, Optional, List
 import httpx
-from django.conf import settings
+from core.exceptions import RAGServiceError
+from core.config import RAGConfig
 
 logger = logging.getLogger(__name__)
 
-
-class RAGClientError(Exception):
-    """Exception raised for RAG client errors."""
-    pass
+# Backward compatibility alias
+RAGClientError = RAGServiceError
 
 
 class RAGClient:
@@ -25,39 +24,17 @@ class RAGClient:
     """
 
     def __init__(self, base_url: Optional[str] = None, api_key: Optional[str] = None, timeout: Optional[float] = None):
-        # Try to get from Django settings first, then environment variables
-        self.base_url = (
-            base_url
-            or getattr(settings, "RAG_API_URL", None)
-            or os.getenv("RAG_API_URL", "")
-        ).rstrip("/")
+        # Use RAGConfig for configuration
+        self.base_url = (base_url or RAGConfig.get_api_url()).rstrip("/")
 
-        if not self.base_url:
-            raise RAGClientError(
-                "RAG_API_URL not configured. Set it in Django settings or environment variable."
-            )
-
-        self.api_key = (
-            api_key
-            or getattr(settings, "RAG_API_KEY", None)
-            or os.getenv("RAG_API_KEY")
-        )
+        self.api_key = api_key or RAGConfig.get_api_key()
         # Default identifiers / knobs for RAG
         # Always prefer Django's RAG_USER_ID; fall back to envs only if missing.
         # This ensures the same user_id is used consistently for ingest + search.
-        self.default_user_id = str(
-            getattr(settings, "RAG_USER_ID", None)
-            or os.getenv("RAG_USER_ID")
-            or os.getenv("RAG_DEFAULT_USER_ID")
-            or "5"
-        )
+        self.default_user_id = str(RAGConfig.get_user_id())
         # Use Django settings first, then env, then default
         # This ensures consistency with monitoring/tasks.py ingest
-        self.microservice = (
-            getattr(settings, "RAG_MICROSERVICE", None)
-            or os.getenv("RAG_MICROSERVICE")
-            or "telegram_bot"
-        )
+        self.microservice = RAGConfig.get_microservice()
         # Default retrieval score threshold (can be overridden via env)
         self.score_threshold = float(
             os.getenv("RETRIEVAL_SCORE_THRESHOLD", "0.25")
@@ -159,11 +136,11 @@ class RAGClient:
         except httpx.HTTPStatusError as e:
             error_msg = f"Search error {e.response.status_code}: {e.response.text[:200]}"
             logger.error(error_msg)
-            raise RAGClientError(error_msg) from e
+            raise RAGServiceError(error_msg) from e
         except httpx.RequestError as e:
             error_msg = f"Request error during search: {str(e)}"
             logger.error(error_msg)
-            raise RAGClientError(error_msg) from e
+            raise RAGServiceError(error_msg) from e
 
     async def ingest_url(
         self,
@@ -208,11 +185,11 @@ class RAGClient:
         except httpx.HTTPStatusError as e:
             error_msg = f"Ingest URL error {e.response.status_code}: {e.response.text[:200]}"
             logger.error(error_msg)
-            raise RAGClientError(error_msg) from e
+            raise RAGServiceError(error_msg) from e
         except httpx.RequestError as e:
             error_msg = f"Request error during URL ingest: {str(e)}"
             logger.error(error_msg)
-            raise RAGClientError(error_msg) from e
+            raise RAGServiceError(error_msg) from e
 
     async def ingest_text(
         self,
@@ -260,11 +237,11 @@ class RAGClient:
         except httpx.HTTPStatusError as e:
             error_msg = f"Ingest text error {e.response.status_code}: {e.response.text[:200]}"
             logger.error(error_msg)
-            raise RAGClientError(error_msg) from e
+            raise RAGServiceError(error_msg) from e
         except httpx.RequestError as e:
             error_msg = f"Request error during text ingest: {str(e)}"
             logger.error(error_msg)
-            raise RAGClientError(error_msg) from e
+            raise RAGServiceError(error_msg) from e
 
     async def reprocess_document(self, doc_id: str) -> Dict[str, Any]:
         """
@@ -288,11 +265,74 @@ class RAGClient:
         except httpx.HTTPStatusError as e:
             error_msg = f"Reprocess error {e.response.status_code}: {e.response.text[:200]}"
             logger.error(error_msg)
-            raise RAGClientError(error_msg) from e
+            raise RAGServiceError(error_msg) from e
         except httpx.RequestError as e:
             error_msg = f"Request error during reprocess: {str(e)}"
             logger.error(error_msg)
-            raise RAGClientError(error_msg) from e
+            raise RAGServiceError(error_msg) from e
+
+    async def ingest_channel_message(
+        self,
+        title: str,
+        text_content: str,
+        published_at: str,
+        source_url: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Ingest a Telegram channel message into the RAG system.
+
+        Args:
+            title: Title for the message document
+            text_content: The full text content of the message
+            published_at: The original publication timestamp (ISO 8601 format)
+            source_url: A direct URL to the original message for citation
+            metadata: Optional metadata (e.g., channel, message_id)
+            user_id: Optional user ID (defaults to self.default_user_id)
+
+        Returns:
+            Dictionary with ingestion result (may include document ID)
+        """
+        payload: Dict[str, Any] = {
+            "title": title,
+            "text_content": text_content,
+            "published_at": published_at,
+            "source_url": source_url,
+        }
+        final_user_id = user_id or self.default_user_id
+        if final_user_id:
+            payload["user_id"] = str(final_user_id)
+        if self.microservice:
+            payload["microservice"] = self.microservice
+        if metadata:
+            payload["metadata"] = metadata
+
+        url = f"{self.base_url}/knowledge/documents/ingest-channel-message/"
+
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"RAG ingest channel message: {title}, source_url: {source_url}")
+
+        try:
+            resp = await self._client.post(url, json=payload, headers=self._headers())
+            resp.raise_for_status()
+            result = resp.json()
+
+            if logger.isEnabledFor(logging.DEBUG):
+                doc_id = result.get("id") or result.get("document_id")
+                logger.debug(
+                    f"RAG ingest channel message successful, doc_id: {doc_id}")
+
+            return result
+        except httpx.HTTPStatusError as e:
+            error_msg = f"Ingest channel message error {e.response.status_code}: {e.response.text[:200]}"
+            logger.error(error_msg)
+            raise RAGServiceError(error_msg) from e
+        except httpx.RequestError as e:
+            error_msg = f"Request error during channel message ingest: {str(e)}"
+            logger.error(error_msg)
+            raise RAGServiceError(error_msg) from e
 
     async def delete_document(self, doc_id: str) -> Dict[str, Any]:
         """
@@ -324,11 +364,108 @@ class RAGClient:
         except httpx.HTTPStatusError as e:
             error_msg = f"Delete error {e.response.status_code}: {e.response.text[:200]}"
             logger.error(error_msg)
-            raise RAGClientError(error_msg) from e
+            raise RAGServiceError(error_msg) from e
         except httpx.RequestError as e:
             error_msg = f"Request error during delete: {str(e)}"
             logger.error(error_msg)
-            raise RAGClientError(error_msg) from e
+            raise RAGServiceError(error_msg) from e
+
+    # Sync wrapper methods for use in Celery tasks and sync contexts
+    def search_sync(
+        self,
+        query: str,
+        top_k: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+        metadata_filter: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Synchronous wrapper for search method."""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return loop.run_until_complete(
+            self.search(query, top_k, filters, metadata_filter, user_id)
+        )
+
+    def ingest_url_sync(
+        self,
+        url_to_fetch: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Synchronous wrapper for ingest_url method."""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return loop.run_until_complete(
+            self.ingest_url(url_to_fetch, metadata, user_id)
+        )
+
+    def ingest_text_sync(
+        self,
+        title: str,
+        content: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Synchronous wrapper for ingest_text method."""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return loop.run_until_complete(
+            self.ingest_text(title, content, metadata, user_id)
+        )
+
+    def ingest_channel_message_sync(
+        self,
+        title: str,
+        text_content: str,
+        published_at: str,
+        source_url: str,
+        metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Synchronous wrapper for ingest_channel_message method."""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return loop.run_until_complete(
+            self.ingest_channel_message(
+                title, text_content, published_at, source_url, metadata, user_id
+            )
+        )
+
+    def reprocess_document_sync(self, doc_id: str) -> Dict[str, Any]:
+        """Synchronous wrapper for reprocess_document method."""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return loop.run_until_complete(self.reprocess_document(doc_id))
+
+    def delete_document_sync(self, doc_id: str) -> Dict[str, Any]:
+        """Synchronous wrapper for delete_document method."""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return loop.run_until_complete(self.delete_document(doc_id))
 
     async def close(self):
         """Close the HTTP client."""

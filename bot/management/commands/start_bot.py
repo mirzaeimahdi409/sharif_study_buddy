@@ -1,17 +1,15 @@
-import logging
 import os
 import asyncio
 
-from django.conf import settings
 from django.core.management.base import BaseCommand
 
 from bot.app import SharifBot, SharifBotConfig
+from core.config import TelegramConfig
+from core.logging_config import setup_logging, get_logger
 
-# Enable logging
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+# Setup logging
+setup_logging(level="INFO", use_colors=True)
+logger = get_logger(__name__)
 
 
 class Command(BaseCommand):
@@ -19,11 +17,12 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         self.stdout.write(self.style.SUCCESS('Starting Telegram bot...'))
-        token = settings.TELEGRAM_BOT_TOKEN
-        if not token:
+        try:
+            token = TelegramConfig.get_bot_token()
+        except Exception as e:
             self.stdout.write(self.style.ERROR(
-                '❌ Telegram bot token not found. Set TELEGRAM_BOT_TOKEN in environment variables.'))
-            logger.error("TELEGRAM_BOT_TOKEN not configured")
+                f'❌ Telegram bot token not found: {e}'))
+            logger.error("TELEGRAM_BOT_TOKEN not configured: %s", e)
             return
 
         run_mode = os.getenv("DJANGO_ENV", "development")
@@ -31,21 +30,24 @@ class Command(BaseCommand):
         try:
             if run_mode == "production":
                 # --- Webhook Mode ---
-                webhook_domain = getattr(settings, "WEBHOOK_DOMAIN", None)
+                webhook_domain = TelegramConfig.get_webhook_domain()
                 if not webhook_domain:
                     self.stdout.write(self.style.ERROR(
                         '❌ WEBHOOK_DOMAIN not set in production environment.'))
-                    logger.error("WEBHOOK_DOMAIN not configured for production")
+                    logger.error(
+                        "WEBHOOK_DOMAIN not configured for production")
                     return
 
                 webhook_url = f"https://{webhook_domain}/{token}"
-                bot_config = SharifBotConfig(token=token, webhook_url=webhook_url)
+                bot_config = SharifBotConfig(
+                    token=token, webhook_url=webhook_url)
                 bot = SharifBot(bot_config)
 
-                logger.info("Telegram bot application initialized for webhook mode.")
+                logger.info(
+                    "Telegram bot application initialized for webhook mode.")
                 self.stdout.write(self.style.SUCCESS(
                     f'✅ Bot is starting in webhook mode. URL: {webhook_url}'))
-                
+
                 # Run the async webhook setup
                 asyncio.run(bot.run_webhook())
 
@@ -54,10 +56,11 @@ class Command(BaseCommand):
                 bot_config = SharifBotConfig(token=token)
                 bot = SharifBot(bot_config)
 
-                logger.info("Telegram bot application initialized for polling mode.")
+                logger.info(
+                    "Telegram bot application initialized for polling mode.")
                 self.stdout.write(self.style.SUCCESS(
                     '✅ Bot is running in polling mode. Press CTRL-C to stop.'))
-                
+
                 # This is a blocking call
                 bot.run_polling()
 

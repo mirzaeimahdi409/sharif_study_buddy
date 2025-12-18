@@ -5,7 +5,8 @@ import logging
 from celery import shared_task
 from django.core.cache import cache
 from .models import KnowledgeDocument
-from .services.rag_client import RAGClient, RAGClientError
+from .services.rag_client import RAGClient
+from .exceptions import RAGServiceError
 
 logger = logging.getLogger(__name__)
 
@@ -31,22 +32,16 @@ def push_document_to_rag(self, document_id: int) -> dict:
             **(doc.metadata or {})
         }
 
-        import asyncio
-
         if doc.source_url:
-            result = asyncio.run(
-                client.ingest_url(
-                    url_to_fetch=doc.source_url,
-                    metadata=metadata,
-                )
+            result = client.ingest_url_sync(
+                url_to_fetch=doc.source_url,
+                metadata=metadata,
             )
         else:
-            result = asyncio.run(
-                client.ingest_text(
-                    title=doc.title,
-                    content=doc.content,
-                    metadata=metadata,
-                )
+            result = client.ingest_text_sync(
+                title=doc.title,
+                content=doc.content,
+                metadata=metadata,
             )
 
         # Extract external_id from RAG response
@@ -82,7 +77,7 @@ def push_document_to_rag(self, document_id: int) -> dict:
         logger.error(error_msg)
         return {"status": "error", "error": error_msg}
 
-    except RAGClientError as e:
+    except RAGServiceError as e:
         error_msg = f"RAG client error: {str(e)}"
         logger.error(
             f"Error pushing document {document_id} to RAG: {error_msg}")
@@ -114,8 +109,7 @@ def reprocess_document_in_rag(self, document_id: int) -> dict:
         # Use external_id if available, otherwise fall back to Django ID
         doc_id = doc.external_id or str(doc.id)
 
-        import asyncio
-        asyncio.run(client.reprocess_document(doc_id=doc_id))
+        client.reprocess_document_sync(doc_id=doc_id)
 
         logger.info(
             f"Successfully reprocessed document '{doc.title}' (ID: {document_id}) in RAG. "
@@ -134,7 +128,7 @@ def reprocess_document_in_rag(self, document_id: int) -> dict:
         logger.error(error_msg)
         return {"status": "error", "error": error_msg}
 
-    except RAGClientError as e:
+    except RAGServiceError as e:
         error_msg = f"RAG client error: {str(e)}"
         logger.error(
             f"Error reprocessing document {document_id} in RAG: {error_msg}")
@@ -160,9 +154,7 @@ def delete_document_from_rag(self, external_id: str) -> dict:
     """
     try:
         client = RAGClient()
-
-        import asyncio
-        asyncio.run(client.delete_document(doc_id=external_id))
+        client.delete_document_sync(doc_id=external_id)
 
         logger.info(
             f"Successfully deleted document with external_id={external_id} from RAG."
@@ -173,7 +165,7 @@ def delete_document_from_rag(self, external_id: str) -> dict:
             "external_id": external_id,
         }
 
-    except RAGClientError as e:
+    except RAGServiceError as e:
         error_msg = f"RAG client error: {str(e)}"
         logger.error(
             f"Error deleting document {external_id} from RAG: {error_msg}"

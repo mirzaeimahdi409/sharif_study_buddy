@@ -1,15 +1,19 @@
 import asyncio
 import hashlib
 import re
-import requests
+import logging
 from celery import shared_task
-from django.conf import settings
 from django.utils import timezone
 from asgiref.sync import sync_to_async
 from telethon import TelegramClient
 from telethon.tl.types import Message
 
 from .models import MonitoredChannel, IngestedTelegramMessage
+from core.services.rag_client import RAGClient
+from core.exceptions import RAGServiceError
+from core.config import TelegramConfig, RAGConfig
+
+logger = logging.getLogger(__name__)
 
 # --- Smart Filtering (same as before) ---
 
@@ -122,9 +126,7 @@ def ingest_message_to_kb(message: Message, channel_username: str):
         # Already ingested successfully.
         return
 
-    dedup_by_content = str(getattr(settings, "TELEGRAM_DEDUP_BY_CONTENT", "") or "").lower() in (
-        "1", "true", "yes", "on"
-    )
+    dedup_by_content = TelegramConfig.get_dedup_by_content()
     if dedup_by_content:
         if IngestedTelegramMessage.objects.filter(
             content_hash=content_hash, ingested=True
@@ -145,44 +147,8 @@ def ingest_message_to_kb(message: Message, channel_username: str):
     if len(cleaned_text) > 100:
         title += "..."
 
-    payload = {
-        "title": title,
-        "text_content": cleaned_text,
-        "published_at": message.date.isoformat(),
-        "source_url": message_link,
-        # Convert to string to match search format (RAG API expects consistent types)
-        "user_id": str(settings.RAG_USER_ID),
-        # Must be one of the allowed values from the RAG API:
-        #   support_assistant, telegram_bot
-        # Use same value as RAGClient.search() for consistency
-        "microservice": getattr(settings, "RAG_MICROSERVICE", None) or "telegram_bot",
-        "metadata": {
-            "source": "telegram_channel",
-            "channel": channel_username,
-            "message_id": message.id,
-            "message_date": message.date.isoformat(),
-            "external_id": external_id,
-        }
-    }
-
     try:
-        # --- Debug: show exact payload sent to RAG ---
-        try:
-            import json
-
-            pretty_payload = json.dumps(payload, ensure_ascii=False, indent=2)
-            print(
-                "📤 RAG ingest-channel-message payload "
-                f"(channel={channel_username}, message_id={message.id}):\n"
-                f"{pretty_payload}"
-            )
-        except Exception:
-            # Fallback in case json or encoding fails
-            print(
-                f"📤 RAG ingest-channel-message payload (raw) for "
-                f"{channel_username}/{message.id}: {payload}"
-            )
-
+        # Update attempt tracking
         rec.attempts = (rec.attempts or 0) + 1
         rec.last_attempt_at = timezone.now()
         rec.source_url = message_link
@@ -190,24 +156,29 @@ def ingest_message_to_kb(message: Message, channel_username: str):
         rec.save(update_fields=["attempts", "last_attempt_at",
                  "source_url", "content_hash", "updated_at"])
 
-        response = requests.post(
-            settings.RAG_API_URL + '/knowledge/documents/ingest-channel-message/',
-            json=payload,
-            timeout=30,
+        # Use RAGClient for ingestion
+        client = RAGClient()
+        result = client.ingest_channel_message_sync(
+            title=title,
+            text_content=cleaned_text,
+            published_at=message.date.isoformat(),
+            source_url=message_link,
+            metadata={
+                "source": "telegram_channel",
+                "channel": channel_username,
+                "message_id": message.id,
+                "message_date": message.date.isoformat(),
+                "external_id": external_id,
+            },
         )
-        response.raise_for_status()
 
-        data = {}
-        try:
-            data = response.json() or {}
-        except ValueError:
-            data = {}
+        doc_id = result.get("id") or result.get("document_id")
 
-        doc_id = data.get("id") or data.get("document_id")
-
-        print(
-            f"✅ Successfully ingested message {message.id} from {channel_username} "
-            f"(doc_id={doc_id})"
+        logger.info(
+            "Successfully ingested message %s from %s (doc_id=%s)",
+            message.id,
+            channel_username,
+            doc_id,
         )
 
         rec.ingested = True
@@ -224,19 +195,25 @@ def ingest_message_to_kb(message: Message, channel_username: str):
                 "updated_at",
             ]
         )
-    except requests.exceptions.RequestException as e:
-        print(
-            f"❌ Error ingesting message {message.id} from {channel_username}: {e}")
-        resp_text = None
-        if hasattr(e, "response") and e.response is not None:
-            try:
-                resp_text = e.response.text
-            except Exception:
-                resp_text = None
-        if resp_text:
-            print(f"   Response: {resp_text}")
-
-        rec.last_error = f"{e} | response={resp_text}" if resp_text else str(e)
+    except RAGServiceError as e:
+        error_msg = str(e)
+        logger.error(
+            "Error ingesting message %s from %s: %s",
+            message.id,
+            channel_username,
+            error_msg,
+        )
+        rec.last_error = error_msg
+        rec.save(update_fields=["last_error", "updated_at"])
+    except Exception as e:
+        error_msg = f"Unexpected error: {str(e)}"
+        logger.exception(
+            "Unexpected error ingesting message %s from %s: %s",
+            message.id,
+            channel_username,
+            error_msg,
+        )
+        rec.last_error = error_msg
         rec.save(update_fields=["last_error", "updated_at"])
 
 # --- Main Celery Task ---
@@ -266,9 +243,9 @@ def harvest_channels_task():
         print("No channels to monitor. Exiting.")
         return
 
-    # Get Telegram credentials from Django settings
-    api_id = settings.TELEGRAM_API_ID
-    api_hash = settings.TELEGRAM_API_HASH
+    # Get Telegram credentials from config
+    api_id = TelegramConfig.get_api_id()
+    api_hash = TelegramConfig.get_api_hash()
 
     if not api_id or not api_hash:
         print("❌ TELEGRAM_API_ID / TELEGRAM_API_HASH are not configured. Exiting.")

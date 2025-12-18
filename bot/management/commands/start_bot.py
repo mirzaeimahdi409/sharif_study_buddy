@@ -1,5 +1,8 @@
 import os
 import asyncio
+import signal
+import threading
+from typing import Optional
 
 from django.core.management.base import BaseCommand
 
@@ -11,50 +14,95 @@ from core.logging_config import setup_logging, get_logger
 setup_logging(level="INFO", use_colors=True)
 logger = get_logger(__name__)
 
+# Global variable to store the bot instance for cleanup
+_bot_instance: Optional[SharifBot] = None
+_shutdown_event = threading.Event()
 
-def run_async(coro):
+
+def run_async_application(bot: SharifBot) -> None:
     """
-    Run an async coroutine, handling both cases where an event loop
-    is already running or not.
+    Run the async bot application in a separate event loop.
+    This is used for webhook mode where Django handles the HTTP requests.
     """
-    try:
-        # Check if there's already a running event loop
-        loop = asyncio.get_running_loop()
-        # If we get here, there's a running loop
-        # We need to run in a separate thread with its own event loop
-        import threading
+    async def main():
+        try:
+            # Start the application
+            await bot.start_application()
 
-        result = None
-        exception = None
+            # Set up the webhook URL
+            await bot.setup_webhook()
 
-        def run_in_thread():
-            nonlocal result, exception
-            # Create a new event loop for this thread
-            new_loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(new_loop)
+            logger.info("Bot application is running. Waiting for updates...")
+
+            # Keep the application running
+            # The application will process updates from the queue
+            # We need to keep the event loop running
             try:
-                result = new_loop.run_until_complete(coro)
+                # Wait indefinitely until shutdown
+                while not _shutdown_event.is_set():
+                    await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                logger.info("Application loop cancelled")
+
+        except Exception as e:
+            logger.exception(f"Error in async application: {e}", exc_info=True)
+            raise
+        finally:
+            # Cleanup
+            try:
+                await bot.stop_application()
+                await bot.shutdown_application()
             except Exception as e:
-                exception = e
+                logger.error(f"Error during shutdown: {e}", exc_info=True)
+
+    # Run in a new event loop
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by user (KeyboardInterrupt)")
+    except Exception as e:
+        logger.exception(
+            f"Fatal error in async application: {e}", exc_info=True)
+        raise
+    finally:
+        if loop:
+            try:
+                # Cancel all pending tasks
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+                # Wait for tasks to complete cancellation
+                if pending:
+                    loop.run_until_complete(asyncio.gather(
+                        *pending, return_exceptions=True))
+            except Exception as e:
+                logger.error(f"Error cleaning up tasks: {e}", exc_info=True)
             finally:
-                new_loop.close()
+                loop.close()
 
-        thread = threading.Thread(target=run_in_thread, daemon=False)
-        thread.start()
-        thread.join()
 
-        if exception:
-            raise exception
-        return result
-    except RuntimeError:
-        # No running loop, safe to use asyncio.run()
-        asyncio.run(coro)
+def signal_handler(signum, frame):
+    """Handle shutdown signals."""
+    logger.info(f"Received signal {signum}, shutting down...")
+    _shutdown_event.set()
+    if _bot_instance:
+        # Trigger shutdown
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.create_task(_bot_instance.stop_application())
+        except Exception:
+            pass
 
 
 class Command(BaseCommand):
     help = 'Starts the Telegram bot in polling or webhook mode'
 
     def handle(self, *args, **options):
+        global _bot_instance
+
         self.stdout.write(self.style.SUCCESS('Starting Telegram bot...'))
         try:
             token = TelegramConfig.get_bot_token()
@@ -66,9 +114,13 @@ class Command(BaseCommand):
 
         run_mode = os.getenv("DJANGO_ENV", "development")
 
+        # Register signal handlers for graceful shutdown
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+
         try:
             if run_mode == "production":
-                # --- Webhook Mode ---
+                # --- Webhook Mode (Custom) ---
                 webhook_domain = TelegramConfig.get_webhook_domain()
                 if not webhook_domain:
                     self.stdout.write(self.style.ERROR(
@@ -80,20 +132,37 @@ class Command(BaseCommand):
                 webhook_url = f"https://{webhook_domain}/{token}"
                 bot_config = SharifBotConfig(
                     token=token, webhook_url=webhook_url)
-                bot = SharifBot(bot_config)
+                _bot_instance = SharifBot(bot_config)
 
                 logger.info(
                     "Telegram bot application initialized for webhook mode.")
                 self.stdout.write(self.style.SUCCESS(
                     f'✅ Bot is starting in webhook mode. URL: {webhook_url}'))
+                self.stdout.write(self.style.SUCCESS(
+                    '✅ Bot application will run in the background. Django will handle webhook requests.'))
 
-                # Run the async webhook setup
-                run_async(bot.run_webhook())
+                # Run the async application in a separate thread
+                # This allows Django to continue running while the bot processes updates
+                thread = threading.Thread(
+                    target=run_async_application,
+                    args=(_bot_instance,),
+                    daemon=True
+                )
+                thread.start()
+
+                # Wait for the thread (or until interrupted)
+                try:
+                    thread.join()
+                except KeyboardInterrupt:
+                    logger.info("Bot stopped by user (KeyboardInterrupt)")
+                    self.stdout.write(self.style.WARNING(
+                        '\n⚠️  Bot stopped by user.'))
+                    _shutdown_event.set()
 
             else:
                 # --- Polling Mode ---
                 bot_config = SharifBotConfig(token=token)
-                bot = SharifBot(bot_config)
+                _bot_instance = SharifBot(bot_config)
 
                 logger.info(
                     "Telegram bot application initialized for polling mode.")
@@ -101,7 +170,7 @@ class Command(BaseCommand):
                     '✅ Bot is running in polling mode. Press CTRL-C to stop.'))
 
                 # This is a blocking call
-                bot.run_polling()
+                _bot_instance.run_polling()
 
         except KeyboardInterrupt:
             logger.info("Bot stopped by user (KeyboardInterrupt)")
@@ -112,5 +181,6 @@ class Command(BaseCommand):
                 f'❌ Fatal error: {e}'))
             raise
         finally:
+            _shutdown_event.set()
             logger.info("Bot shutdown complete")
             self.stdout.write(self.style.SUCCESS('Bot stopped.'))

@@ -18,6 +18,11 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 
+# Import webhook view
+from bot.views import telegram_webhook
+
 urlpatterns = [
     path("admin/", admin.site.urls),
+    # Telegram webhook endpoint - token will be part of the URL path
+    path("<str:token>/", telegram_webhook, name="telegram_webhook"),
 ]

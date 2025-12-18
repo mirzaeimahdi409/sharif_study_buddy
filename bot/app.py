@@ -1,4 +1,5 @@
 """Main Telegram bot application."""
+import asyncio
 import logging
 from dataclasses import dataclass
 from telegram import Update
@@ -44,6 +45,20 @@ from bot.handlers.callback_handlers import debug_callback_handler
 
 logger = logging.getLogger(__name__)
 
+# Global variables to store the bot application instance and event loop for webhook access
+_bot_application: Application | None = None
+_bot_event_loop: asyncio.AbstractEventLoop | None = None
+
+
+def get_bot_application() -> Application | None:
+    """Get the global bot application instance."""
+    return _bot_application
+
+
+def get_bot_event_loop() -> asyncio.AbstractEventLoop | None:
+    """Get the global bot event loop."""
+    return _bot_event_loop
+
 
 @dataclass(frozen=True)
 class SharifBotConfig:
@@ -57,8 +72,11 @@ class SharifBot:
 
     def __init__(self, config: SharifBotConfig) -> None:
         """Initialize the bot with configuration."""
+        global _bot_application
         self.config = config
         self.application: Application = Application.builder().token(config.token).build()
+        # Store globally for webhook access
+        _bot_application = self.application
 
     def setup_handlers(self) -> None:
         """Set up all bot handlers."""
@@ -141,17 +159,41 @@ class SharifBot:
         logger.info("Starting bot polling...")
         self.application.run_polling(allowed_updates=Update.ALL_TYPES)
 
-    async def run_webhook(self) -> None:
-        """Run the bot in webhook mode."""
+    async def setup_webhook(self) -> None:
+        """
+        Set up webhook mode (custom webhook setup).
+        This sets the webhook URL with Telegram but doesn't start a web server.
+        The webhook requests will be handled by Django views.
+        """
         self.setup_handlers()
         if not self.config.webhook_url:
             logger.error("Webhook URL not provided in config.")
             return
 
-        logger.info(f"Starting bot with webhook: {self.config.webhook_url}")
-        await self.application.run_webhook(
-            listen="0.0.0.0",
-            port=8443,
-            webhook_url=self.config.webhook_url,
+        logger.info(f"Setting webhook URL: {self.config.webhook_url}")
+        await self.application.bot.set_webhook(
+            url=self.config.webhook_url,
             allowed_updates=Update.ALL_TYPES,
         )
+        logger.info("Webhook URL set successfully")
+
+    async def start_application(self) -> None:
+        """Start the bot application (for custom webhook mode)."""
+        global _bot_event_loop
+        logger.info("Starting bot application...")
+        await self.application.start()
+        # Store the event loop for use in webhook views
+        _bot_event_loop = asyncio.get_running_loop()
+        logger.info("Bot application started")
+
+    async def stop_application(self) -> None:
+        """Stop the bot application."""
+        logger.info("Stopping bot application...")
+        await self.application.stop()
+        logger.info("Bot application stopped")
+
+    async def shutdown_application(self) -> None:
+        """Shutdown the bot application."""
+        logger.info("Shutting down bot application...")
+        await self.application.shutdown()
+        logger.info("Bot application shut down")

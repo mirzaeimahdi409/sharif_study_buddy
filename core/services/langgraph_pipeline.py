@@ -1,4 +1,5 @@
 import os
+import logging
 from typing import Dict, List, TypedDict, Tuple
 from urllib.parse import urlparse
 from langgraph.graph import StateGraph, START, END
@@ -9,6 +10,8 @@ from core.models import ChatSession, ChatMessage
 from asgiref.sync import sync_to_async
 from django.utils import timezone
 from core import messages
+
+logger = logging.getLogger(__name__)
 
 MAX_HISTORY = int(os.getenv("CHAT_MAX_HISTORY", "8"))
 TOP_K = int(os.getenv("RAG_TOP_K", "5"))
@@ -47,6 +50,14 @@ async def retrieve_node(state: GraphState) -> GraphState:
         debug["rag"] = res
         items = res.get("results") or res.get("data") or []
 
+        # --- Logging of retrieved RAG contents for debugging ---
+        if logger.isEnabledFor(logging.INFO):
+            logger.info(
+                "RAG search returned %d items for question: %s",
+                len(items),
+                state["question"][:200].replace("\n", " "),
+            )
+
         for idx, it in enumerate(items[:TOP_K], 1):
             text = it.get("text") or it.get("chunk") or it.get("content") or ""
             if not text.strip():
@@ -73,6 +84,18 @@ async def retrieve_node(state: GraphState) -> GraphState:
             score = it.get("score") or metadata.get("score")
             owner_user_id = it.get(
                 "owner_user_id") or metadata.get("owner_user_id")
+
+            # Log each retrieved item (truncated) for easier debugging
+            if logger.isEnabledFor(logging.INFO):
+                logger.info(
+                    "RAG item %d: title=%s score=%s source=%s url=%s text=%s",
+                    idx,
+                    (title or "")[:120],
+                    score,
+                    source_name,
+                    source_url,
+                    text[:300].replace("\n", " "),
+                )
 
             # Build a structured snippet with source information
             snippet_parts = []

@@ -51,8 +51,10 @@ DEBUG = True
 # Allowed hosts for the Django development server from environment variable
 # Parse comma-separated list of allowed hosts
 # Default includes common Docker container names and localhost
-_allowed_hosts_str = config("ALLOWED_HOSTS", default="localhost,127.0.0.1,0.0.0.0,sharif_study_buddy-app,app")
-ALLOWED_HOSTS = [host.strip() for host in _allowed_hosts_str.split(",") if host.strip()]
+_allowed_hosts_str = config(
+    "ALLOWED_HOSTS", default="localhost,127.0.0.1,0.0.0.0,sharif_study_buddy-app,app")
+ALLOWED_HOSTS = [host.strip()
+                 for host in _allowed_hosts_str.split(",") if host.strip()]
 
 
 # Application definition
@@ -76,6 +78,8 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    # Allow all hosts for /metrics (must be before CommonMiddleware)
+    "core.middleware.AllowAllHostsForMetricsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "core.middleware.DisableCSRFForMetricsMiddleware",  # Disable CSRF for /metrics

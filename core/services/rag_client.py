@@ -43,11 +43,41 @@ class RAGClient:
         )
 
         self.timeout = timeout or float(os.getenv("RAG_TIMEOUT", "30"))
-        self._client = httpx.AsyncClient(timeout=self.timeout)
+        
+        # Create httpx client with detailed configuration
+        client_timeout = httpx.Timeout(
+            connect=float(os.getenv("RAG_CONNECT_TIMEOUT", str(self.timeout))),
+            read=float(os.getenv("RAG_READ_TIMEOUT", str(self.timeout))),
+            write=float(os.getenv("RAG_WRITE_TIMEOUT", str(self.timeout))),
+            pool=float(os.getenv("RAG_POOL_TIMEOUT", str(self.timeout))),
+        )
+        
+        # Configure limits for connection pool
+        limits = httpx.Limits(
+            max_keepalive_connections=int(os.getenv("RAG_MAX_KEEPALIVE", "5")),
+            max_connections=int(os.getenv("RAG_MAX_CONNECTIONS", "10")),
+        )
+        
+        self._client = httpx.AsyncClient(
+            timeout=client_timeout,
+            limits=limits,
+            follow_redirects=True,
+        )
 
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                f"RAGClient initialized with base_url: {self.base_url[:50]}...")
+        logger.info(
+            "🔧 RAGClient initialized",
+            extra={
+                "base_url": self.base_url,
+                "timeout": self.timeout,
+                "connect_timeout": client_timeout.connect,
+                "read_timeout": client_timeout.read,
+                "max_connections": limits.max_connections,
+                "max_keepalive": limits.max_keepalive_connections,
+                "has_api_key": bool(self.api_key),
+                "user_id": self.default_user_id,
+                "microservice": self.microservice,
+            }
+        )
 
     def _headers(self) -> Dict[str, str]:
         headers: Dict[str, str] = {"Content-Type": "application/json"}
@@ -342,28 +372,118 @@ class RAGClient:
 
         url = f"{self.base_url}/knowledge/documents/ingest-channel-message/"
 
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                f"RAG ingest channel message: {title}, source_url: {source_url}")
+        # Detailed logging before request
+        logger.info(
+            "🔵 RAG ingest channel message - Starting request",
+            extra={
+                "url": url,
+                "base_url": self.base_url,
+                "timeout": self.timeout,
+                "title": title[:100] if title else None,
+                "text_content_length": len(text_content) if text_content else 0,
+                "source_url": source_url,
+                "user_id": final_user_id,
+                "microservice": self.microservice,
+            }
+        )
+        
+        # Log payload size for debugging
+        import json
+        try:
+            payload_size = len(json.dumps(payload, ensure_ascii=False))
+            logger.debug(f"Request payload size: {payload_size} bytes")
+        except Exception:
+            pass
 
         try:
+            logger.debug(f"Making POST request to: {url}")
+            logger.debug(f"Client timeout: {self._client.timeout}")
+            logger.debug(f"Client base_url: {self._client.base_url}")
+            
             resp = await self._client.post(url, json=payload, headers=self._headers())
+            
+            logger.info(
+                f"✅ RAG ingest channel message - Response received: {resp.status_code}",
+                extra={"status_code": resp.status_code, "url": url}
+            )
+            
             resp.raise_for_status()
             result = resp.json()
 
-            if logger.isEnabledFor(logging.DEBUG):
-                doc_id = result.get("id") or result.get("document_id")
-                logger.debug(
-                    f"RAG ingest channel message successful, doc_id: {doc_id}")
+            doc_id = result.get("id") or result.get("document_id")
+            logger.info(
+                f"✅ RAG ingest channel message successful, doc_id: {doc_id}",
+                extra={"doc_id": doc_id, "url": url}
+            )
 
             return result
         except httpx.HTTPStatusError as e:
             error_msg = f"Ingest channel message error {e.response.status_code}: {e.response.text[:200]}"
-            logger.error(error_msg)
+            logger.error(
+                f"❌ RAG ingest channel message - HTTP error: {error_msg}",
+                extra={
+                    "status_code": e.response.status_code,
+                    "url": url,
+                    "base_url": self.base_url,
+                    "response_text": e.response.text[:500] if e.response.text else None,
+                    "headers": dict(e.response.headers) if hasattr(e.response, 'headers') else None,
+                },
+                exc_info=True
+            )
+            raise RAGServiceError(error_msg) from e
+        except httpx.TimeoutException as e:
+            error_msg = f"Timeout during channel message ingest (timeout={self.timeout}s): {str(e)}"
+            logger.error(
+                f"⏱️ RAG ingest channel message - Timeout: {error_msg}",
+                extra={
+                    "url": url,
+                    "base_url": self.base_url,
+                    "timeout": self.timeout,
+                    "exception_type": type(e).__name__,
+                },
+                exc_info=True
+            )
+            raise RAGServiceError(error_msg) from e
+        except httpx.ConnectError as e:
+            error_msg = f"Connection error during channel message ingest: {str(e)}"
+            logger.error(
+                f"🔴 RAG ingest channel message - Connection error: {error_msg}",
+                extra={
+                    "url": url,
+                    "base_url": self.base_url,
+                    "timeout": self.timeout,
+                    "exception_type": type(e).__name__,
+                    "exception_args": str(e.args) if hasattr(e, 'args') else None,
+                },
+                exc_info=True
+            )
             raise RAGServiceError(error_msg) from e
         except httpx.RequestError as e:
             error_msg = f"Request error during channel message ingest: {str(e)}"
-            logger.error(error_msg)
+            logger.error(
+                f"❌ RAG ingest channel message - Request error: {error_msg}",
+                extra={
+                    "url": url,
+                    "base_url": self.base_url,
+                    "timeout": self.timeout,
+                    "exception_type": type(e).__name__,
+                    "exception_args": str(e.args) if hasattr(e, 'args') else None,
+                    "request_url": str(e.request.url) if hasattr(e, 'request') and e.request else None,
+                },
+                exc_info=True
+            )
+            raise RAGServiceError(error_msg) from e
+        except Exception as e:
+            error_msg = f"Unexpected error during channel message ingest: {str(e)}"
+            logger.error(
+                f"💥 RAG ingest channel message - Unexpected error: {error_msg}",
+                extra={
+                    "url": url,
+                    "base_url": self.base_url,
+                    "exception_type": type(e).__name__,
+                },
+                exc_info=True
+            )
             raise RAGServiceError(error_msg) from e
 
     async def delete_document(self, doc_id: str) -> Dict[str, Any]:
@@ -493,23 +613,77 @@ class RAGClient:
     ) -> Dict[str, Any]:
         """Synchronous wrapper for ingest_channel_message method."""
         import asyncio
+        import threading
+        import time
         from concurrent.futures import ThreadPoolExecutor
         
+        main_thread_id = threading.current_thread().ident
+        logger.info(
+            "🔄 Starting sync wrapper for ingest_channel_message",
+            extra={
+                "main_thread_id": main_thread_id,
+                "title": title[:100] if title else None,
+                "source_url": source_url,
+                "base_url": self.base_url,
+            }
+        )
+        
+        start_time = time.time()
+        
         def run_in_thread():
+            thread_id = threading.current_thread().ident
+            logger.debug(
+                f"📌 Async execution started in thread {thread_id}",
+                extra={"thread_id": thread_id, "main_thread_id": main_thread_id}
+            )
+            
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                return loop.run_until_complete(
+                logger.debug(f"Event loop created in thread {thread_id}")
+                result = loop.run_until_complete(
                     self.ingest_channel_message(
                         title, text_content, published_at, source_url, metadata, user_id
                     )
                 )
+                logger.debug(f"Async execution completed in thread {thread_id}")
+                return result
+            except Exception as e:
+                logger.error(
+                    f"❌ Exception in async thread {thread_id}: {type(e).__name__}: {str(e)}",
+                    extra={"thread_id": thread_id, "exception_type": type(e).__name__},
+                    exc_info=True
+                )
+                raise
             finally:
                 loop.close()
+                logger.debug(f"Event loop closed in thread {thread_id}")
         
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(run_in_thread)
-            return future.result()
+        try:
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                logger.debug("ThreadPoolExecutor created, submitting task")
+                future = executor.submit(run_in_thread)
+                logger.debug("Task submitted, waiting for result")
+                result = future.result()
+                
+                duration = time.time() - start_time
+                logger.info(
+                    f"✅ Sync wrapper completed successfully in {duration:.2f}s",
+                    extra={"duration": duration, "main_thread_id": main_thread_id}
+                )
+                return result
+        except Exception as e:
+            duration = time.time() - start_time
+            logger.error(
+                f"❌ Sync wrapper failed after {duration:.2f}s: {type(e).__name__}: {str(e)}",
+                extra={
+                    "duration": duration,
+                    "main_thread_id": main_thread_id,
+                    "exception_type": type(e).__name__,
+                },
+                exc_info=True
+            )
+            raise
 
     def reprocess_document_sync(self, doc_id: str) -> Dict[str, Any]:
         """Synchronous wrapper for reprocess_document method."""

@@ -148,6 +148,9 @@ def ingest_message_to_kb(message: Message, channel_username: str):
         title += "..."
 
     try:
+        import time
+        start_time = time.time()
+
         # Update attempt tracking
         rec.attempts = (rec.attempts or 0) + 1
         rec.last_attempt_at = timezone.now()
@@ -156,8 +159,30 @@ def ingest_message_to_kb(message: Message, channel_username: str):
         rec.save(update_fields=["attempts", "last_attempt_at",
                  "source_url", "content_hash", "updated_at"])
 
+        logger.info(
+            "📤 Starting ingestion for message %s from %s (attempt #%s)",
+            message.id,
+            channel_username,
+            rec.attempts,
+            extra={
+                "message_id": message.id,
+                "channel": channel_username,
+                "attempt": rec.attempts,
+                "external_id": external_id,
+                "content_hash": content_hash,
+                "cleaned_text_length": len(cleaned_text),
+                "title": title[:100] if title else None,
+            }
+        )
+
         # Use RAGClient for ingestion
+        logger.debug("Creating RAGClient instance")
         client = RAGClient()
+        logger.debug(
+            "RAGClient created, calling ingest_channel_message_sync",
+            extra={"base_url": client.base_url, "timeout": client.timeout}
+        )
+
         result = client.ingest_channel_message_sync(
             title=title,
             text_content=cleaned_text,
@@ -171,6 +196,10 @@ def ingest_message_to_kb(message: Message, channel_username: str):
                 "external_id": external_id,
             },
         )
+
+        ingestion_duration = time.time() - start_time
+        logger.debug(
+            f"Ingestion API call completed in {ingestion_duration:.2f}s")
 
         doc_id = result.get("id") or result.get("document_id")
 
@@ -196,22 +225,47 @@ def ingest_message_to_kb(message: Message, channel_username: str):
             ]
         )
     except RAGServiceError as e:
+        import time
+        error_duration = time.time() - start_time if 'start_time' in locals() else None
         error_msg = str(e)
         logger.error(
-            "Error ingesting message %s from %s: %s",
+            "❌ Error ingesting message %s from %s: %s (duration: %s)",
             message.id,
             channel_username,
             error_msg,
+            f"{error_duration:.2f}s" if error_duration else "unknown",
+            extra={
+                "message_id": message.id,
+                "channel": channel_username,
+                "error": error_msg,
+                "error_type": type(e).__name__,
+                "duration": error_duration,
+                "attempt": rec.attempts,
+                "external_id": external_id,
+            },
+            exc_info=True
         )
         rec.last_error = error_msg
         rec.save(update_fields=["last_error", "updated_at"])
     except Exception as e:
+        import time
+        error_duration = time.time() - start_time if 'start_time' in locals() else None
         error_msg = f"Unexpected error: {str(e)}"
         logger.exception(
-            "Unexpected error ingesting message %s from %s: %s",
+            "💥 Unexpected error ingesting message %s from %s: %s (duration: %s)",
             message.id,
             channel_username,
             error_msg,
+            f"{error_duration:.2f}s" if error_duration else "unknown",
+            extra={
+                "message_id": message.id,
+                "channel": channel_username,
+                "error": error_msg,
+                "error_type": type(e).__name__,
+                "duration": error_duration,
+                "attempt": rec.attempts,
+                "external_id": external_id,
+            }
         )
         rec.last_error = error_msg
         rec.save(update_fields=["last_error", "updated_at"])

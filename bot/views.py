@@ -74,17 +74,24 @@ def prometheus_metrics(request: HttpRequest) -> HttpResponse:
     Prometheus metrics endpoint.
     Exposes all metrics in Prometheus format.
     """
+    # Log request for debugging
+    logger.debug(
+        f"Metrics request: method={request.method}, host={request.get_host()}, path={request.path}")
+
     try:
         from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
-    except ImportError:
-        logger.error("prometheus_client not installed")
-        return HttpResponseBadRequest("Prometheus client not available", status=503)
+    except ImportError as e:
+        logger.error(f"prometheus_client not installed: {e}")
+        return HttpResponse("Prometheus client not available", status=503, content_type="text/plain")
 
     # Only allow GET requests (Prometheus uses GET)
     if request.method != 'GET':
-        return HttpResponseBadRequest("Only GET method is allowed")
+        logger.warning(
+            f"Invalid method for metrics endpoint: {request.method}")
+        return HttpResponse("Only GET method is allowed", status=405, content_type="text/plain")
 
     # Update gauge metrics (active users, total users)
+    # Wrap in try-except so metrics generation doesn't fail if DB is unavailable
     try:
         from core.models import ChatSession, UserProfile
         from core.services import metrics as metrics_module
@@ -98,8 +105,13 @@ def prometheus_metrics(request: HttpRequest) -> HttpResponse:
         # Get total users count
         total_users_count = UserProfile.objects.count()
         metrics_module.total_users_total.set(total_users_count)
+
+        logger.debug(
+            f"Updated user metrics: active={active_users_count}, total={total_users_count}")
     except Exception as e:
-        logger.warning(f"Failed to update user metrics: {e}", exc_info=True)
+        # Log but don't fail - metrics can still be generated without user counts
+        logger.warning(
+            f"Failed to update user metrics (continuing anyway): {e}", exc_info=True)
 
     # Generate Prometheus metrics output
     try:
@@ -108,8 +120,9 @@ def prometheus_metrics(request: HttpRequest) -> HttpResponse:
         if not isinstance(output, bytes):
             output = str(output).encode('utf-8')
 
+        logger.debug(f"Generated metrics: {len(output)} bytes")
         response = HttpResponse(output, content_type=CONTENT_TYPE_LATEST)
         return response
     except Exception as e:
         logger.error(f"Error generating metrics: {e}", exc_info=True)
-        return HttpResponseBadRequest(f"Error generating metrics: {str(e)}")
+        return HttpResponse(f"Error generating metrics: {str(e)}", status=500, content_type="text/plain")

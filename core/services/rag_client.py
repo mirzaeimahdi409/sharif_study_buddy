@@ -413,14 +413,25 @@ class RAGClient:
     ) -> Dict[str, Any]:
         """Synchronous wrapper for search method."""
         import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
+        from concurrent.futures import ThreadPoolExecutor
+        
+        def run_in_thread():
+            # Create a new event loop in this thread to avoid conflicts
+            # with Celery's fork-based workers and anyio initialization issues
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-        return loop.run_until_complete(
-            self.search(query, top_k, filters, metadata_filter, user_id)
-        )
+            try:
+                return loop.run_until_complete(
+                    self.search(query, top_k, filters, metadata_filter, user_id)
+                )
+            finally:
+                loop.close()
+        
+        # Use a thread pool executor to isolate the async code
+        # This prevents anyio/httpx issues in Celery fork workers
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(run_in_thread)
+            return future.result()
 
     def ingest_url_sync(
         self,
@@ -430,14 +441,21 @@ class RAGClient:
     ) -> Dict[str, Any]:
         """Synchronous wrapper for ingest_url method."""
         import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
+        from concurrent.futures import ThreadPoolExecutor
+        
+        def run_in_thread():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-        return loop.run_until_complete(
-            self.ingest_url(url_to_fetch, metadata, user_id)
-        )
+            try:
+                return loop.run_until_complete(
+                    self.ingest_url(url_to_fetch, metadata, user_id)
+                )
+            finally:
+                loop.close()
+        
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(run_in_thread)
+            return future.result()
 
     def ingest_text_sync(
         self,
@@ -448,14 +466,21 @@ class RAGClient:
     ) -> Dict[str, Any]:
         """Synchronous wrapper for ingest_text method."""
         import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
+        from concurrent.futures import ThreadPoolExecutor
+        
+        def run_in_thread():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-        return loop.run_until_complete(
-            self.ingest_text(title, content, metadata, user_id)
-        )
+            try:
+                return loop.run_until_complete(
+                    self.ingest_text(title, content, metadata, user_id)
+                )
+            finally:
+                loop.close()
+        
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(run_in_thread)
+            return future.result()
 
     def ingest_channel_message_sync(
         self,
@@ -468,36 +493,57 @@ class RAGClient:
     ) -> Dict[str, Any]:
         """Synchronous wrapper for ingest_channel_message method."""
         import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
+        from concurrent.futures import ThreadPoolExecutor
+        
+        def run_in_thread():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-        return loop.run_until_complete(
-            self.ingest_channel_message(
-                title, text_content, published_at, source_url, metadata, user_id
-            )
-        )
+            try:
+                return loop.run_until_complete(
+                    self.ingest_channel_message(
+                        title, text_content, published_at, source_url, metadata, user_id
+                    )
+                )
+            finally:
+                loop.close()
+        
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(run_in_thread)
+            return future.result()
 
     def reprocess_document_sync(self, doc_id: str) -> Dict[str, Any]:
         """Synchronous wrapper for reprocess_document method."""
         import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
+        from concurrent.futures import ThreadPoolExecutor
+        
+        def run_in_thread():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-        return loop.run_until_complete(self.reprocess_document(doc_id))
+            try:
+                return loop.run_until_complete(self.reprocess_document(doc_id))
+            finally:
+                loop.close()
+        
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(run_in_thread)
+            return future.result()
 
     def delete_document_sync(self, doc_id: str) -> Dict[str, Any]:
         """Synchronous wrapper for delete_document method."""
         import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
+        from concurrent.futures import ThreadPoolExecutor
+        
+        def run_in_thread():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-        return loop.run_until_complete(self.delete_document(doc_id))
+            try:
+                return loop.run_until_complete(self.delete_document(doc_id))
+            finally:
+                loop.close()
+        
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(run_in_thread)
+            return future.result()
 
     async def close(self):
         """Close the HTTP client."""

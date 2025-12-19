@@ -11,8 +11,12 @@ from langchain_core.callbacks.manager import CallbackManagerForLLMRun
 from langchain_core.messages import BaseMessage
 from pydantic.v1 import PrivateAttr
 from core.config import LLMConfig
+from core.services.langsmith_client import get_callback_manager, configure_langsmith_environment
 
 logger = logging.getLogger(__name__)
+
+# Configure LangSmith at module import time
+configure_langsmith_environment()
 
 
 class OpenRouterLLM(LLM):
@@ -35,6 +39,7 @@ class OpenRouterLLM(LLM):
         model: Optional[str] = None,
         temperature: Optional[float] = None,
         streaming: bool = False,
+        callbacks: Optional[Any] = None,
         **kwargs
     ):
         resolved_api_key = api_key or LLMConfig.get_api_key()
@@ -58,12 +63,24 @@ class OpenRouterLLM(LLM):
         if not self.api_key:
             raise ValueError("OPENROUTER_API_KEY is required")
 
-        # Create internal ChatOpenAI instance
+        # Get LangSmith callbacks if not provided and LangSmith is configured
+        if callbacks is None:
+            callbacks = get_callback_manager(
+                tags=["openrouter", "llm"],
+                metadata={
+                    "model": resolved_model,
+                    "temperature": resolved_temperature,
+                    "provider": "openrouter",
+                }
+            )
+
+        # Create internal ChatOpenAI instance with callbacks
         self._chat_model = ChatOpenAI(
             model=self.model,
             temperature=self.temperature,
             api_key=self.api_key,
             base_url=self.base_url,
+            callbacks=callbacks,
         )
 
     @property

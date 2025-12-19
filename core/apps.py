@@ -8,4 +8,12 @@ class CoreConfig(AppConfig):
     def ready(self):
         # Import signal handlers
         from . import signals  # noqa: F401
+        
+        # Initialize LangSmith tracing if configured
+        try:
+            from core.services.langsmith_client import configure_langsmith_environment
+            configure_langsmith_environment()
+        except Exception:
+            # LangSmith initialization is optional, fail silently if not configured
+            pass
 

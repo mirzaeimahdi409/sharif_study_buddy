@@ -1,6 +1,6 @@
 import logging
 import time
-from typing import Dict, List, TypedDict, Tuple, Any
+from typing import Dict, List, TypedDict, Tuple, Any, Optional
 from urllib.parse import urlparse
 from langgraph.graph import StateGraph, START, END
 from core.services.openrouter import OpenRouterLLM
@@ -12,8 +12,12 @@ from asgiref.sync import sync_to_async
 from django.utils import timezone
 from core import messages
 from core.services import metrics
+from core.services.langsmith_client import get_langgraph_config, configure_langsmith_environment
 
 logger = logging.getLogger(__name__)
+
+# Configure LangSmith at module import time
+configure_langsmith_environment()
 
 MAX_HISTORY = ChatConfig.get_max_history()
 TOP_K = ChatConfig.get_rag_top_k()
@@ -355,8 +359,24 @@ async def run_graph(session: ChatSession, user_text: str) -> Tuple[str, Dict]:
     graph.add_edge("generate", END)
     app = graph.compile()
     
+    # Configure LangSmith callbacks for LangGraph
+    invoke_config = get_langgraph_config(
+        tags=["langgraph", "rag-pipeline"],
+        metadata={
+            "session_id": str(session.id),
+            "user_id": str(session.user_id) if hasattr(session, 'user_id') else None,
+            "model": MODEL,
+            "temperature": TEMPERATURE,
+            "max_history": MAX_HISTORY,
+            "rag_top_k": TOP_K,
+        }
+    )
+    
     try:
-        final: GraphState = await app.ainvoke(state)
+        if invoke_config:
+            final: GraphState = await app.ainvoke(state, config=invoke_config)
+        else:
+            final: GraphState = await app.ainvoke(state)
         answer = final.get("answer", "")
         await _save(session, "assistant", answer)
         

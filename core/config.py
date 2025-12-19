@@ -163,6 +163,50 @@ class ChatConfig:
         return int(config("RAG_TOP_K", default="5"))
 
 
+class LangSmithConfig:
+    """LangSmith observability configuration."""
+
+    @staticmethod
+    def get_api_key() -> Optional[str]:
+        """Get LangSmith API key."""
+        return (
+            getattr(settings, "LANGSMITH_API_KEY", None)
+            or config("LANGSMITH_API_KEY", default=None)
+        )
+
+    @staticmethod
+    def get_project_name() -> str:
+        """Get LangSmith project name."""
+        return (
+            getattr(settings, "LANGSMITH_PROJECT", None)
+            or config("LANGSMITH_PROJECT", default="sharif-assistant")
+        )
+
+    @staticmethod
+    def get_tracing_enabled() -> bool:
+        """Check if LangSmith tracing is enabled."""
+        return (
+            getattr(settings, "LANGSMITH_TRACING_ENABLED", None)
+            or config("LANGSMITH_TRACING_ENABLED", default="true", cast=bool)
+        )
+
+    @staticmethod
+    def get_endpoint() -> Optional[str]:
+        """Get LangSmith endpoint (optional, defaults to cloud)."""
+        return (
+            getattr(settings, "LANGSMITH_ENDPOINT", None)
+            or config("LANGSMITH_ENDPOINT", default=None)
+        )
+
+    @staticmethod
+    def is_configured() -> bool:
+        """Check if LangSmith is properly configured."""
+        return (
+            LangSmithConfig.get_tracing_enabled()
+            and LangSmithConfig.get_api_key() is not None
+        )
+
+
 class DatabaseConfig:
     """Database configuration."""
 

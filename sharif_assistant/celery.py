@@ -22,6 +22,14 @@ app.config_from_object("django.conf:settings", namespace="CELERY")
 # Load task modules from all registered Django apps.
 app.autodiscover_tasks()
 
+# Initialize LangSmith tracing for Celery workers if configured
+try:
+    from core.services.langsmith_client import configure_langsmith_environment
+    configure_langsmith_environment()
+except Exception:
+    # LangSmith initialization is optional, fail silently if not configured
+    pass
+
 
 @app.task(bind=True, ignore_result=True)
 def debug_task(self):

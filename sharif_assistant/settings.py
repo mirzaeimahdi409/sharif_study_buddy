@@ -43,6 +43,13 @@ RAG_USER_ID = config("RAG_USER_ID", default=5, cast=int)
 # Allowed values: support_assistant, telegram_bot
 RAG_MICROSERVICE = config("RAG_MICROSERVICE", default="telegram_bot")
 
+# LangSmith Observability
+LANGSMITH_API_KEY = config("LANGSMITH_API_KEY", default=None)
+LANGSMITH_PROJECT = config("LANGSMITH_PROJECT", default="sharif-assistant")
+LANGSMITH_TRACING_ENABLED = config(
+    "LANGSMITH_TRACING_ENABLED", default=True, cast=bool)
+LANGSMITH_ENDPOINT = config("LANGSMITH_ENDPOINT", default=None)
+
 # Admins (Telegram IDs, comma-separated, e.g. "123456,789012")
 ADMIN_TELEGRAM_IDS = config("ADMIN_TELEGRAM_IDS", default="")
 

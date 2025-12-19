@@ -531,7 +531,7 @@ class RAGClient:
                         exc_info=True
                     )
                     raise RAGServiceError(error_msg) from e
-                except httpx.RequestError as e:
+            except httpx.RequestError as e:
                 # Other request errors - retry if it's a network issue
                 if isinstance(e, (httpx.ConnectError, httpx.NetworkError)):
                     last_exception = e
@@ -568,7 +568,7 @@ class RAGClient:
                     exc_info=True
                 )
                 raise RAGServiceError(error_msg) from e
-                except Exception as e:
+            except Exception as e:
                 # Unexpected errors are not retried
                 error_msg = f"Unexpected error during channel message ingest: {str(e)}"
                 logger.error(

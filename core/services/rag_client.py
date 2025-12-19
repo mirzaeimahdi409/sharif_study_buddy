@@ -45,7 +45,7 @@ class RAGClient:
         )
 
         self.timeout = timeout or float(os.getenv("RAG_TIMEOUT", "30"))
-        
+
         # Create httpx client with detailed configuration
         client_timeout = httpx.Timeout(
             connect=float(os.getenv("RAG_CONNECT_TIMEOUT", str(self.timeout))),
@@ -53,23 +53,32 @@ class RAGClient:
             write=float(os.getenv("RAG_WRITE_TIMEOUT", str(self.timeout))),
             pool=float(os.getenv("RAG_POOL_TIMEOUT", str(self.timeout))),
         )
-        
+
         # Configure limits for connection pool
         limits = httpx.Limits(
             max_keepalive_connections=int(os.getenv("RAG_MAX_KEEPALIVE", "5")),
             max_connections=int(os.getenv("RAG_MAX_CONNECTIONS", "10")),
         )
-        
+
         self._client = httpx.AsyncClient(
             timeout=client_timeout,
             limits=limits,
             follow_redirects=True,
         )
 
+        # Parse base_url for diagnostics
+        parsed_init_url = urlparse(self.base_url)
+        init_host = parsed_init_url.hostname
+        init_port = parsed_init_url.port or (443 if parsed_init_url.scheme == 'https' else 80)
+        init_scheme = parsed_init_url.scheme
+        
         logger.info(
-            "🔧 RAGClient initialized",
+            f"🔧 RAGClient initialized - Connecting to {init_scheme}://{init_host}:{init_port}",
             extra={
                 "base_url": self.base_url,
+                "host": init_host,
+                "port": init_port,
+                "scheme": init_scheme,
                 "timeout": self.timeout,
                 "connect_timeout": client_timeout.connect,
                 "read_timeout": client_timeout.read,
@@ -162,22 +171,23 @@ class RAGClient:
             )
             resp.raise_for_status()
             result = resp.json()
-            
+
             # Calculate duration
             search_duration = time.time() - search_start_time
             metrics.rag_search_duration_seconds.observe(search_duration)
-            
+
             # Get result count
             items = result.get("results") or result.get("data") or []
             result_count = len(items)
-            
+
             # Track metrics
             metrics.rag_search_requests_total.labels(status='success').inc()
             metrics.rag_documents_retrieved.observe(result_count)
-            
+
             # Track document scores if available
             for item in items:
-                score = item.get("score") or (item.get("metadata") or {}).get("score")
+                score = item.get("score") or (
+                    item.get("metadata") or {}).get("score")
                 if score is not None:
                     try:
                         metrics.rag_document_scores.observe(float(score))
@@ -192,7 +202,8 @@ class RAGClient:
             search_duration = time.time() - search_start_time
             metrics.rag_search_duration_seconds.observe(search_duration)
             metrics.rag_search_requests_total.labels(status='error').inc()
-            metrics.rag_search_errors_total.labels(error_type='http_error').inc()
+            metrics.rag_search_errors_total.labels(
+                error_type='http_error').inc()
             error_msg = f"Search error {e.response.status_code}: {e.response.text[:200]}"
             logger.error(error_msg)
             raise RAGServiceError(error_msg) from e
@@ -200,7 +211,8 @@ class RAGClient:
             search_duration = time.time() - search_start_time
             metrics.rag_search_duration_seconds.observe(search_duration)
             metrics.rag_search_requests_total.labels(status='error').inc()
-            error_type = 'timeout' if isinstance(e, httpx.TimeoutException) else 'request_error'
+            error_type = 'timeout' if isinstance(
+                e, httpx.TimeoutException) else 'request_error'
             metrics.rag_search_errors_total.labels(error_type=error_type).inc()
             error_msg = f"Request error during search: {str(e)}"
             logger.error(error_msg)
@@ -382,7 +394,7 @@ class RAGClient:
 
         # Detailed logging before request
         logger.info(
-            "🔵 RAG ingest channel message - Starting request",
+            f"🔵 RAG ingest channel message - Starting request to {scheme}://{host}:{port}",
             extra={
                 "url": url,
                 "base_url": self.base_url,
@@ -397,7 +409,7 @@ class RAGClient:
                 "microservice": self.microservice,
             }
         )
-        
+
         # Log payload size for debugging
         import json
         try:
@@ -413,26 +425,28 @@ class RAGClient:
 
         for attempt in range(1, max_retries + 1):
             try:
-                logger.debug(
-                    f"Making POST request to: {url} (attempt {attempt}/{max_retries})",
+                logger.info(
+                    f"🌐 Attempting connection to {scheme}://{host}:{port} (attempt {attempt}/{max_retries})",
                     extra={
                         "attempt": attempt,
                         "max_retries": max_retries,
                         "host": host,
                         "port": port,
                         "scheme": scheme,
+                        "url": url,
+                        "connect_timeout": self._client.timeout.connect if hasattr(self._client.timeout, 'connect') else self.timeout,
                     }
                 )
                 logger.debug(f"Client timeout: {self._client.timeout}")
                 logger.debug(f"Client base_url: {self._client.base_url}")
-                
+
                 resp = await self._client.post(url, json=payload, headers=self._headers())
-                
+
                 logger.info(
                     f"✅ RAG ingest channel message - Response received: {resp.status_code}",
                     extra={"status_code": resp.status_code, "url": url}
                 )
-                
+
                 resp.raise_for_status()
                 result = resp.json()
 
@@ -446,9 +460,10 @@ class RAGClient:
             except (httpx.ConnectError, httpx.NetworkError) as e:
                 last_exception = e
                 if attempt < max_retries:
-                    wait_time = retry_delay * (2 ** (attempt - 1))  # Exponential backoff
+                    wait_time = retry_delay * \
+                        (2 ** (attempt - 1))  # Exponential backoff
                     logger.warning(
-                        f"⚠️ Connection error on attempt {attempt}/{max_retries}, retrying in {wait_time:.1f}s",
+                        f"⚠️ Connection error on attempt {attempt}/{max_retries} to {scheme}://{host}:{port}, retrying in {wait_time:.1f}s. Error: {str(e)}",
                         extra={
                             "attempt": attempt,
                             "max_retries": max_retries,
@@ -456,16 +471,18 @@ class RAGClient:
                             "host": host,
                             "port": port,
                             "scheme": scheme,
+                            "url": url,
                             "error": str(e),
                             "error_type": type(e).__name__,
+                            "exception_repr": repr(e),
                         }
                     )
                     await asyncio.sleep(wait_time)
                 else:
                     # Last attempt failed
-                    error_msg = f"Connection error during channel message ingest after {max_retries} attempts: {str(e)}"
+                    error_msg = f"Connection error during channel message ingest after {max_retries} attempts to {scheme}://{host}:{port}: {str(e)}"
                     logger.error(
-                        f"🔴 RAG ingest channel message - Connection error (all {max_retries} attempts failed): {error_msg}",
+                        f"🔴 RAG ingest channel message - Connection error (all {max_retries} attempts failed) to {scheme}://{host}:{port}. Error: {str(e)}",
                         extra={
                             "url": url,
                             "base_url": self.base_url,
@@ -477,6 +494,7 @@ class RAGClient:
                             "exception_type": type(e).__name__,
                             "exception_args": str(e.args) if hasattr(e, 'args') else None,
                             "exception_repr": repr(e),
+                            "full_url": url,
                         },
                         exc_info=True
                     )
@@ -549,7 +567,7 @@ class RAGClient:
                         )
                         await asyncio.sleep(wait_time)
                         continue
-                
+
                 # Non-retryable request error or last attempt
                 error_msg = f"Request error during channel message ingest: {str(e)}"
                 logger.error(
@@ -584,10 +602,11 @@ class RAGClient:
                     exc_info=True
                 )
                 raise RAGServiceError(error_msg) from e
-        
+
         # This should never be reached, but just in case
         if last_exception:
-            raise RAGServiceError(f"All {max_retries} connection attempts failed") from last_exception
+            raise RAGServiceError(
+                f"All {max_retries} connection attempts failed") from last_exception
 
     async def delete_document(self, doc_id: str) -> Dict[str, Any]:
         """
@@ -637,7 +656,7 @@ class RAGClient:
         """Synchronous wrapper for search method."""
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
-        
+
         def run_in_thread():
             # Create a new event loop in this thread to avoid conflicts
             # with Celery's fork-based workers and anyio initialization issues
@@ -645,11 +664,12 @@ class RAGClient:
             asyncio.set_event_loop(loop)
             try:
                 return loop.run_until_complete(
-                    self.search(query, top_k, filters, metadata_filter, user_id)
+                    self.search(query, top_k, filters,
+                                metadata_filter, user_id)
                 )
             finally:
                 loop.close()
-        
+
         # Use a thread pool executor to isolate the async code
         # This prevents anyio/httpx issues in Celery fork workers
         with ThreadPoolExecutor(max_workers=1) as executor:
@@ -665,7 +685,7 @@ class RAGClient:
         """Synchronous wrapper for ingest_url method."""
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
-        
+
         def run_in_thread():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -675,7 +695,7 @@ class RAGClient:
                 )
             finally:
                 loop.close()
-        
+
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(run_in_thread)
             return future.result()
@@ -690,7 +710,7 @@ class RAGClient:
         """Synchronous wrapper for ingest_text method."""
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
-        
+
         def run_in_thread():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -700,7 +720,7 @@ class RAGClient:
                 )
             finally:
                 loop.close()
-        
+
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(run_in_thread)
             return future.result()
@@ -719,7 +739,7 @@ class RAGClient:
         import threading
         import time
         from concurrent.futures import ThreadPoolExecutor
-        
+
         main_thread_id = threading.current_thread().ident
         logger.info(
             "🔄 Starting sync wrapper for ingest_channel_message",
@@ -730,16 +750,17 @@ class RAGClient:
                 "base_url": self.base_url,
             }
         )
-        
+
         start_time = time.time()
-        
+
         def run_in_thread():
             thread_id = threading.current_thread().ident
             logger.debug(
                 f"📌 Async execution started in thread {thread_id}",
-                extra={"thread_id": thread_id, "main_thread_id": main_thread_id}
+                extra={"thread_id": thread_id,
+                       "main_thread_id": main_thread_id}
             )
-            
+
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
@@ -749,30 +770,33 @@ class RAGClient:
                         title, text_content, published_at, source_url, metadata, user_id
                     )
                 )
-                logger.debug(f"Async execution completed in thread {thread_id}")
+                logger.debug(
+                    f"Async execution completed in thread {thread_id}")
                 return result
             except Exception as e:
                 logger.error(
                     f"❌ Exception in async thread {thread_id}: {type(e).__name__}: {str(e)}",
-                    extra={"thread_id": thread_id, "exception_type": type(e).__name__},
+                    extra={"thread_id": thread_id,
+                           "exception_type": type(e).__name__},
                     exc_info=True
                 )
                 raise
             finally:
                 loop.close()
                 logger.debug(f"Event loop closed in thread {thread_id}")
-        
+
         try:
             with ThreadPoolExecutor(max_workers=1) as executor:
                 logger.debug("ThreadPoolExecutor created, submitting task")
                 future = executor.submit(run_in_thread)
                 logger.debug("Task submitted, waiting for result")
                 result = future.result()
-                
+
                 duration = time.time() - start_time
                 logger.info(
                     f"✅ Sync wrapper completed successfully in {duration:.2f}s",
-                    extra={"duration": duration, "main_thread_id": main_thread_id}
+                    extra={"duration": duration,
+                           "main_thread_id": main_thread_id}
                 )
                 return result
         except Exception as e:
@@ -792,7 +816,7 @@ class RAGClient:
         """Synchronous wrapper for reprocess_document method."""
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
-        
+
         def run_in_thread():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -800,7 +824,7 @@ class RAGClient:
                 return loop.run_until_complete(self.reprocess_document(doc_id))
             finally:
                 loop.close()
-        
+
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(run_in_thread)
             return future.result()
@@ -809,7 +833,7 @@ class RAGClient:
         """Synchronous wrapper for delete_document method."""
         import asyncio
         from concurrent.futures import ThreadPoolExecutor
-        
+
         def run_in_thread():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -817,7 +841,7 @@ class RAGClient:
                 return loop.run_until_complete(self.delete_document(doc_id))
             finally:
                 loop.close()
-        
+
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(run_in_thread)
             return future.result()

@@ -50,7 +50,8 @@ ADMIN_TELEGRAM_IDS = config("ADMIN_TELEGRAM_IDS", default="")
 DEBUG = True
 # Allowed hosts for the Django development server from environment variable
 # Parse comma-separated list of allowed hosts
-_allowed_hosts_str = config("ALLOWED_HOSTS", default="localhost,127.0.0.1,0.0.0.0")
+# Default includes common Docker container names and localhost
+_allowed_hosts_str = config("ALLOWED_HOSTS", default="localhost,127.0.0.1,0.0.0.0,sharif_study_buddy-app,app")
 ALLOWED_HOSTS = [host.strip() for host in _allowed_hosts_str.split(",") if host.strip()]
 
 
@@ -77,6 +78,7 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "core.middleware.DisableCSRFForMetricsMiddleware",  # Disable CSRF for /metrics
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",

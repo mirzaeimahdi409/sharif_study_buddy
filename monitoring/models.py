@@ -13,6 +13,10 @@ class MonitoredChannel(models.Model):
         auto_now_add=True,
         help_text="The date and time when the channel was added."
     )
+    rag_message_count = models.PositiveIntegerField(
+        default=100,
+        help_text="The number of recent messages to process for RAG."
+    )
 
     def __str__(self):
         return f"@{self.username}"

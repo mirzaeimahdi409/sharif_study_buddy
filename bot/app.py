@@ -22,6 +22,7 @@ from bot.constants import (
     ADMIN_LIST_DOCS,
     ADMIN_CHANNELS_ADD_USERNAME,
     ADMIN_CHANNELS_REMOVE_USERNAME,
+    ADMIN_CHANNELS_ADD_MESSAGE_COUNT,
 )
 from bot.handlers.admin_handlers import (
     admin_entry_handler,
@@ -33,6 +34,7 @@ from bot.handlers.admin_handlers import (
     admin_new_url_doc_title_handler,
     admin_channels_add_username_handler,
     admin_channels_remove_username_handler,
+    admin_channels_add_message_count_handler,
     admin_cancel_handler,
 )
 from bot.handlers.user_handlers import (
@@ -123,6 +125,10 @@ class SharifBot:
                 ADMIN_CHANNELS_REMOVE_USERNAME: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND,
                                    admin_channels_remove_username_handler)
+                ],
+                ADMIN_CHANNELS_ADD_MESSAGE_COUNT: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND,
+                                   admin_channels_add_message_count_handler)
                 ],
             },
             fallbacks=[

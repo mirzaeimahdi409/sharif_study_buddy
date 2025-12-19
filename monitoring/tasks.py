@@ -219,11 +219,15 @@ def ingest_message_to_kb(message: Message, channel_username: str):
 # --- Main Celery Task ---
 
 
-async def _harvest_channel_async(client, channel_username):
+async def _harvest_channel_async(client, channel: MonitoredChannel):
     """Asynchronous logic to harvest a single channel."""
-    print(f"--- Harvesting channel: {channel_username} ---")
+    channel_username = channel.username
+    limit = channel.rag_message_count if channel.rag_message_count > 0 else None
+
+    print(
+        f"--- Harvesting channel: {channel_username} (limit: {limit or 'all'}) ---")
     try:
-        async for message in client.iter_messages(channel_username, limit=150):
+        async for message in client.iter_messages(channel_username, limit=limit):
             if is_message_relevant(message):
                 # Run Django/requests-based ingestion in a sync thread
                 await sync_to_async(
@@ -238,7 +242,7 @@ async def _harvest_channel_async(client, channel_username):
 def harvest_channels_task():
     """The main Celery task to run the channel harvesting logic."""
     # Fetch channel list from the database
-    channels = MonitoredChannel.objects.values_list('username', flat=True)
+    channels = list(MonitoredChannel.objects.all())
     if not channels:
         print("No channels to monitor. Exiting.")
         return
@@ -285,7 +289,7 @@ def harvest_channels_task():
                 return
 
             tasks = [
-                _harvest_channel_async(client, username) for username in channels
+                _harvest_channel_async(client, channel) for channel in channels
             ]
             await asyncio.gather(*tasks)
         finally:

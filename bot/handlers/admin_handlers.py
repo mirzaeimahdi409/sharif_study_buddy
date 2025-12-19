@@ -22,6 +22,7 @@ from bot.constants import (
     ADMIN_LIST_DOCS,
     ADMIN_CHANNELS_ADD_USERNAME,
     ADMIN_CHANNELS_REMOVE_USERNAME,
+    ADMIN_CHANNELS_ADD_MESSAGE_COUNT,
 )
 from bot.utils import get_admin_ids, escape_markdown_v2
 from bot.keyboards import (
@@ -314,7 +315,8 @@ async def admin_new_url_doc_title_handler(
         doc = await sync_to_async(KnowledgeDocument.objects.create)(
             title=title, content="", source_url=source_url, metadata={}
         )
-        logger.info("KnowledgeDocument (url) created successfully id=%s", doc.id)
+        logger.info(
+            "KnowledgeDocument (url) created successfully id=%s", doc.id)
         try:
             push_document_to_rag.delay(doc.id)
             logger.info("Queued push_document_to_rag for doc id=%s", doc.id)
@@ -357,14 +359,60 @@ async def admin_channels_add_username_handler(
         await update.message.reply_text("نام کاربری نامعتبر است. لطفاً دوباره تلاش کنید.")
         return ADMIN_CHANNELS_ADD_USERNAME
 
+    context.user_data["new_channel_username"] = channel_username
+    await update.message.reply_text(
+        f"نام کاربری کانال: @{channel_username}\n\n"
+        "حالا تعداد پیام‌های اخیر که باید برای RAG پردازش شوند را وارد کنید (مثلاً 100).\nبرای پردازش تمام پیام‌های کانال، عدد 0 را ارسال کنید:"
+    )
+    return ADMIN_CHANNELS_ADD_MESSAGE_COUNT
+
+
+async def admin_channels_add_message_count_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Handle admin channel add message count input."""
+    if not update.message or not update.message.text:
+        return ADMIN_CHANNELS_ADD_MESSAGE_COUNT
+
+    try:
+        message_count = int(update.message.text.strip())
+        if message_count < 0:
+            raise ValueError("Message count must be non-negative.")
+    except (ValueError, TypeError):
+        await update.message.reply_text(
+            "عدد نامعتبر است. لطفاً یک عدد صحیح غیر منفی (0 یا بیشتر) وارد کنید."
+        )
+        return ADMIN_CHANNELS_ADD_MESSAGE_COUNT
+
+    channel_username = context.user_data.get("new_channel_username")
+    if not channel_username:
+        await update.message.reply_text(
+            "خطا: نام کاربری کانال یافت نشد. لطفاً از ابتدا شروع کنید."
+        )
+        # Return to main admin menu
+        await update.message.reply_text(
+            "👑 پنل ادمین:", reply_markup=admin_main_keyboard()
+        )
+        return ADMIN_MAIN
+
     from monitoring.models import MonitoredChannel
 
-    _, created = await MonitoredChannel.objects.aget_or_create(username=channel_username)
+    channel, created = await MonitoredChannel.objects.aupdate_or_create(
+        username=channel_username,
+        defaults={"rag_message_count": message_count},
+    )
 
     if created:
-        await update.message.reply_text(f"✅ کانال @{channel_username} با موفقیت اضافه شد.")
+        await update.message.reply_text(
+            f"✅ کانال @{channel_username} با تعداد {message_count} پیام با موفقیت اضافه شد."
+        )
     else:
-        await update.message.reply_text(f"⚠️ کانال @{channel_username} از قبل وجود داشت.")
+        await update.message.reply_text(
+            f"⚠️ کانال @{channel_username} از قبل وجود داشت و به‌روزرسانی شد. تعداد پیام‌ها: {message_count}."
+        )
+
+    # Clean up user_data
+    context.user_data.pop("new_channel_username", None)
 
     # Return to main admin menu
     await update.message.reply_text(
@@ -455,8 +503,10 @@ async def _handle_stats(query: "CallbackQuery") -> None:
 
     def _today_counts():
         msgs_today = ChatMessage.objects.filter(created_at__date=today).count()
-        sessions_today = ChatSession.objects.filter(created_at__date=today).count()
-        docs_today = KnowledgeDocument.objects.filter(created_at__date=today).count()
+        sessions_today = ChatSession.objects.filter(
+            created_at__date=today).count()
+        docs_today = KnowledgeDocument.objects.filter(
+            created_at__date=today).count()
         return msgs_today, sessions_today, docs_today
 
     msgs_today, sessions_today, docs_today = await sync_to_async(_today_counts)()
@@ -541,7 +591,7 @@ async def _show_docs_list(query: "CallbackQuery", page: int = 0, page_size: int 
             return list(
                 KnowledgeDocument.objects.order_by("-created_at")
                 .values("id", "title", "source_url", "indexed_in_rag", "created_at")[
-                    page * page_size : (page + 1) * page_size
+                    page * page_size: (page + 1) * page_size
                 ]
             )
 
@@ -568,7 +618,8 @@ async def _show_docs_list(query: "CallbackQuery", page: int = 0, page_size: int 
 
         for doc in docs:
             doc_id = doc["id"]
-            title = doc["title"][:50] + ("..." if len(doc["title"]) > 50 else "")
+            title = doc["title"][:50] + \
+                ("..." if len(doc["title"]) > 50 else "")
             indexed = "✅" if doc["indexed_in_rag"] else "❌"
             source = doc["source_url"] or "متن"
             created = (
@@ -657,7 +708,8 @@ async def _confirm_delete_document(query: "CallbackQuery", doc_id: int) -> None:
         doc = await sync_to_async(KnowledgeDocument.objects.get)(id=doc_id)
         title = doc.title
         await sync_to_async(doc.delete)()
-        logger.info("Admin deleted KnowledgeDocument id=%s title=%r", doc_id, title)
+        logger.info(
+            "Admin deleted KnowledgeDocument id=%s title=%r", doc_id, title)
         await query.answer("✅ سند با موفقیت حذف شد.", show_alert=True)
         # Refresh the list (go back to first page)
         await _show_docs_list(query, page=0)
@@ -666,4 +718,3 @@ async def _confirm_delete_document(query: "CallbackQuery", doc_id: int) -> None:
     except Exception as e:
         logger.exception("Error deleting document: %s", e)
         await query.answer("❌ خطا در حذف سند.", show_alert=True)
-

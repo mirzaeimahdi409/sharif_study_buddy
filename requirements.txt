@@ -29,5 +29,5 @@ requests
 # Telegram Channel Harvester
 telethon
 
-# Monitoring
-django-prometheus
+# Metrics & Monitoring
+prometheus-client

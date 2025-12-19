@@ -12,6 +12,7 @@ from core.models import ChatMessage, ChatSession, KnowledgeDocument, UserProfile
 from core.services.rag_client import RAGClient
 from core.exceptions import RAGServiceError
 from core.tasks import push_document_to_rag, reprocess_document_in_rag
+from core.services import metrics
 from bot.constants import (
     ADMIN_MAIN,
     ADMIN_NEW_DOC_TITLE,
@@ -45,6 +46,7 @@ def is_admin(update: Update) -> bool:
 
 async def admin_entry_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle /admin command entry."""
+    metrics.commands_total.labels(command='admin').inc()
     if not update.message:
         return ConversationHandler.END
     if not is_admin(update):

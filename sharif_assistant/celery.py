@@ -26,15 +26,3 @@ app.autodiscover_tasks()
 @app.task(bind=True, ignore_result=True)
 def debug_task(self):
     print(f"Request: {self.request!r}")
-
-# Connect Django-Prometheus signals for Celery
-from django_prometheus.celery.signals import (
-    celery_task_pre_run,
-    celery_task_post_run,
-    celery_task_failure,
-)
-from celery.signals import task_prerun, task_postrun, task_failure
-
-task_prerun.connect(celery_task_pre_run)
-task_postrun.connect(celery_task_post_run)
-task_failure.connect(celery_task_failure)

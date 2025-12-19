@@ -65,7 +65,6 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
 
     # 3rd-party apps
-    "django_prometheus",
     "rest_framework",
 
     # Local apps
@@ -75,7 +74,6 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
-    "django_prometheus.middleware.PrometheusBeforeMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -83,7 +81,6 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "django_prometheus.middleware.PrometheusAfterMiddleware",
 ]
 
 ROOT_URLCONF = "sharif_assistant.urls"
@@ -213,10 +210,6 @@ CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60  # 25 minutes
 CELERY_BEAT_SCHEDULE = {
     'harvest-telegram-channels-every-15-minutes': {
         'task': 'monitoring.tasks.harvest_channels_task',
-        'schedule': 60 * 15,  # Runs every 15 minutes
-    },
-    'update-active-users-metric-every-5-minutes': {
-        'task': 'bot.tasks.update_active_users_metric',
-        'schedule': 60 * 5,  # Runs every 5 minutes
+        'schedule': 60 * 1,  # Runs every 15 minutes
     },
 }

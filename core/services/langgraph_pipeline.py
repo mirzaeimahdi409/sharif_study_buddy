@@ -1,19 +1,6 @@
 import logging
 import time
 from typing import Dict, List, TypedDict, Tuple, Any
-from core.metrics import (
-    ai_pipeline_requests_total,
-    ai_pipeline_errors_total,
-    ai_pipeline_duration_seconds,
-    rag_requests_total,
-    rag_errors_total,
-    rag_duration_seconds,
-    llm_requests_total,
-    llm_errors_total,
-    llm_duration_seconds,
-    llm_rag_usage_total,
-    llm_rag_context_usage_total,
-)
 from urllib.parse import urlparse
 from langgraph.graph import StateGraph, START, END
 from core.services.openrouter import OpenRouterLLM
@@ -24,6 +11,7 @@ from core.config import ChatConfig, LLMConfig
 from asgiref.sync import sync_to_async
 from django.utils import timezone
 from core import messages
+from core.services import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -59,14 +47,9 @@ async def retrieve_node(state: GraphState) -> GraphState:
     rag = RAGClient()
     snippets: List[str] = []
     debug = {"rag": {}}
-
-    rag_requests_total.labels(endpoint='search').inc()
-    start_time = time.time()
     try:
         # user_id is handled inside RAGClient (default fixed ID for now)
         res = await rag.search(query=state["question"], top_k=TOP_K)
-        elapsed_time = time.time() - start_time
-        rag_duration_seconds.labels(endpoint='search').observe(elapsed_time)
         debug["rag"] = res
         items = res.get("results") or res.get("data") or []
 
@@ -166,9 +149,6 @@ async def retrieve_node(state: GraphState) -> GraphState:
             snippets.append("\n".join(snippet_parts))
 
     except RAGServiceError as e:
-        rag_errors_total.labels(endpoint='search').inc()
-        elapsed_time = time.time() - start_time
-        rag_duration_seconds.labels(endpoint='search').observe(elapsed_time)
         snippets.append(messages.RAG_SERVICE_UNAVAILABLE.format(error=e))
 
     # Format context with clear separation between documents
@@ -196,16 +176,16 @@ async def generate_node(state: GraphState) -> GraphState:
 
     # Build context section with clear formatting
     context = state.get("context", "")
+    has_rag_context = context and context != messages.RAG_NO_DOCUMENTS_FOUND
     context_section = ""
-    rag_context_was_provided = False  # Initialize the flag
-    if context and context != messages.RAG_NO_DOCUMENTS_FOUND:
-        rag_context_was_provided = True  # Set flag to True
-        llm_rag_usage_total.labels(status='rag_used').inc()
+    if has_rag_context:
         context_section = messages.GENERATION_CONTEXT_HEADER.format(
             context=context)
+        # Track that RAG context was provided
+        metrics.rag_context_provided_total.labels(has_documents='true').inc()
     else:
-        llm_rag_usage_total.labels(status='no_rag').inc()
         context_section = messages.GENERATION_NO_CONTEXT_FALLBACK
+        metrics.rag_context_provided_total.labels(has_documents='false').inc()
 
     llm_messages.append({
         "role": "system",
@@ -213,34 +193,46 @@ async def generate_node(state: GraphState) -> GraphState:
     })
     llm_messages.extend(state.get("history", []))
     llm_messages.append({"role": "user", "content": state["question"]})
-
-    llm_requests_total.labels(model_name=MODEL).inc()
-    start_time = time.time()
+    
+    # Track LLM invocation
+    llm_start_time = time.time()
     try:
         response = await llm.ainvoke(llm_messages)
         answer = response.content
+        llm_duration = time.time() - llm_start_time
+        
+        # Track LLM success
+        metrics.llm_invocations_total.labels(model=MODEL, status='success').inc()
+        metrics.llm_invocation_duration_seconds.labels(model=MODEL).observe(llm_duration)
+        
+        # Track response tokens if available
+        if hasattr(response, 'response_metadata') and response.response_metadata:
+            tokens = response.response_metadata.get('token_usage', {}).get('completion_tokens')
+            if tokens:
+                metrics.llm_response_tokens.labels(model=MODEL).observe(tokens)
     except Exception as e:
-        llm_errors_total.labels(model_name=MODEL).inc()
-        logger.exception("LLM invocation failed for model %s", MODEL)
-        answer = messages.LLM_SERVICE_UNAVAILABLE
-    finally:
-        elapsed_time = time.time() - start_time
-        llm_duration_seconds.labels(model_name=MODEL).observe(elapsed_time)
+        llm_duration = time.time() - llm_start_time
+        metrics.llm_invocations_total.labels(model=MODEL, status='error').inc()
+        metrics.llm_invocation_duration_seconds.labels(model=MODEL).observe(llm_duration)
+        error_type = type(e).__name__
+        metrics.llm_errors_total.labels(model=MODEL, error_type=error_type).inc()
+        raise
 
     # Post-process: Convert source references to clickable HTML links if not already formatted
     answer = _convert_sources_to_html_links(answer, state.get("context", ""))
 
-    # Check if the final answer contains citations, but only if RAG context was provided
-    if rag_context_was_provided:
-        # A simple check for source references in the final answer.
-        # This could be the text '[منبع' or the HTML link tag.
-        # The `_convert_sources_to_html_links` function adds a specific section header.
-        # We also need to import `re` module for this.
-        import re
-        if messages.CITATION_SOURCES_SECTION in answer or re.search(r'\[منبع', answer):
-            llm_rag_context_usage_total.labels(status='cited').inc()
+    # Detect if RAG sources were used
+    if has_rag_context:
+        sources_used = metrics.detect_rag_source_usage(answer, context)
+        if sources_used:
+            metrics.rag_sources_used_total.labels(used='true').inc()
+            metrics.rag_context_relevant_used_total.labels(relevant_used='true').inc()
         else:
-            llm_rag_context_usage_total.labels(status='not_cited').inc()
+            metrics.rag_sources_used_total.labels(used='false').inc()
+            metrics.rag_context_relevant_used_total.labels(relevant_used='false').inc()
+            metrics.rag_context_unrelated_total.labels(unrelated='true').inc()
+    else:
+        metrics.rag_sources_used_total.labels(used='false').inc()
 
     state["answer"] = answer
     return state
@@ -346,6 +338,7 @@ def _convert_sources_to_html_links(answer: str, context: str) -> str:
 
 
 async def run_graph(session: ChatSession, user_text: str) -> Tuple[str, Dict]:
+    pipeline_start_time = time.time()
     await _save(session, "user", user_text)
     state: GraphState = {
         "question": user_text,
@@ -361,21 +354,28 @@ async def run_graph(session: ChatSession, user_text: str) -> Tuple[str, Dict]:
     graph.add_edge("retrieve", "generate")
     graph.add_edge("generate", END)
     app = graph.compile()
-
-    pipeline_name = "default_assistant"
-    ai_pipeline_requests_total.labels(pipeline_name=pipeline_name).inc()
-    start_time = time.time()
+    
     try:
         final: GraphState = await app.ainvoke(state)
         answer = final.get("answer", "")
         await _save(session, "assistant", answer)
+        
+        # Track successful pipeline execution
+        pipeline_duration = time.time() - pipeline_start_time
+        metrics.pipeline_executions_total.labels(status='success').inc()
+        metrics.pipeline_execution_duration_seconds.observe(pipeline_duration)
+        
         return answer, final.get("debug", {})
-    except Exception as e:
-        ai_pipeline_errors_total.labels(pipeline_name=pipeline_name).inc()
-        logger.exception("AI pipeline '%s' failed", pipeline_name)
-        # Re-raise the exception to be handled by the caller (e.g., telegram handler)
+    except RAGServiceError as e:
+        pipeline_duration = time.time() - pipeline_start_time
+        metrics.pipeline_executions_total.labels(status='error').inc()
+        metrics.pipeline_execution_duration_seconds.observe(pipeline_duration)
+        metrics.pipeline_errors_total.labels(error_type='rag_error').inc()
         raise
-    finally:
-        elapsed_time = time.time() - start_time
-        ai_pipeline_duration_seconds.labels(
-            pipeline_name=pipeline_name).observe(elapsed_time)
+    except Exception as e:
+        pipeline_duration = time.time() - pipeline_start_time
+        metrics.pipeline_executions_total.labels(status='error').inc()
+        metrics.pipeline_execution_duration_seconds.observe(pipeline_duration)
+        error_type = 'llm_error' if 'llm' in str(type(e)).lower() or 'openrouter' in str(type(e)).lower() else 'general_error'
+        metrics.pipeline_errors_total.labels(error_type=error_type).inc()
+        raise

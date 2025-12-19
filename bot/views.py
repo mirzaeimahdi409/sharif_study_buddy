@@ -66,3 +66,32 @@ def bot_health_check(request: HttpRequest) -> HttpResponse:
     if app and loop and loop.is_running():
         return HttpResponse("OK", status=200)
     return HttpResponse("NOT READY", status=503)
+
+
+def prometheus_metrics(request: HttpRequest) -> HttpResponse:
+    """
+    Prometheus metrics endpoint.
+    Exposes all metrics in Prometheus format.
+    """
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    from asgiref.sync import sync_to_async
+    from core.models import ChatSession, UserProfile
+    from core.services import metrics as metrics_module
+    
+    # Update gauge metrics (active users, total users)
+    try:
+        from django.db import connection
+        # Get active users count (users with active sessions)
+        active_sessions = ChatSession.objects.filter(is_active=True).values('user_profile_id').distinct()
+        active_users_count = active_sessions.count()
+        metrics_module.active_users_total.set(active_users_count)
+        
+        # Get total users count
+        total_users_count = UserProfile.objects.count()
+        metrics_module.total_users_total.set(total_users_count)
+    except Exception as e:
+        logger.warning(f"Failed to update user metrics: {e}")
+    
+    # Generate Prometheus metrics output
+    output = generate_latest()
+    return HttpResponse(output, content_type=CONTENT_TYPE_LATEST)

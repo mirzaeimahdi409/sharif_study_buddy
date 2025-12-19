@@ -8,7 +8,6 @@ from django.contrib.auth import get_user_model
 from telegram import Update
 
 from core.models import ChatSession, UserProfile
-from bot.metrics import new_users_total
 from core.config import TelegramConfig
 
 logger = logging.getLogger(__name__)
@@ -76,6 +75,8 @@ def escape_markdown_v2(text: str) -> str:
 
 async def get_profile_and_session(update: Update) -> ChatSession:
     """Get or create user profile and active chat session."""
+    from core.services import metrics
+    
     User = get_user_model()
     tg_user = update.effective_user
     username = f"tg_{tg_user.id}"
@@ -86,24 +87,32 @@ async def get_profile_and_session(update: Update) -> ChatSession:
     except Exception:
         pass
 
+    is_new_user = False
     try:
         profile = await sync_to_async(UserProfile.objects.get)(
             telegram_id=str(tg_user.id)
         )
     except UserProfile.DoesNotExist:
+        is_new_user = True
         profile = UserProfile(
             user=user,
             telegram_id=str(tg_user.id),
             display_name=tg_user.full_name,
         )
         await sync_to_async(profile.save)()
-        new_users_total.inc()
+        # Track new user
+        metrics.new_users_total.inc()
 
+    is_new_session = False
     try:
         session = await sync_to_async(ChatSession.objects.get)(
             user_profile=profile, is_active=True
         )
     except ChatSession.DoesNotExist:
+        is_new_session = True
         session = ChatSession(user_profile=profile, is_active=True, title=None)
         await sync_to_async(session.save)()
+        # Track new session
+        metrics.user_sessions_total.inc()
+    
     return session

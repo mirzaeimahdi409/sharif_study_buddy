@@ -1,9 +1,11 @@
 import os
 import logging
+import time
 from typing import Any, Dict, Optional, List
 import httpx
 from core.exceptions import RAGServiceError
 from core.config import RAGConfig
+from core.services import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +119,8 @@ class RAGClient:
                 top_k,
             )
 
+        # Track RAG search request
+        search_start_time = time.time()
         try:
             resp = await self._client.post(
                 url,
@@ -126,18 +130,46 @@ class RAGClient:
             )
             resp.raise_for_status()
             result = resp.json()
+            
+            # Calculate duration
+            search_duration = time.time() - search_start_time
+            metrics.rag_search_duration_seconds.observe(search_duration)
+            
+            # Get result count
+            items = result.get("results") or result.get("data") or []
+            result_count = len(items)
+            
+            # Track metrics
+            metrics.rag_search_requests_total.labels(status='success').inc()
+            metrics.rag_documents_retrieved.observe(result_count)
+            
+            # Track document scores if available
+            for item in items:
+                score = item.get("score") or (item.get("metadata") or {}).get("score")
+                if score is not None:
+                    try:
+                        metrics.rag_document_scores.observe(float(score))
+                    except (ValueError, TypeError):
+                        pass
 
             if logger.isEnabledFor(logging.DEBUG):
-                result_count = len(result.get("results")
-                                   or result.get("data") or [])
                 logger.debug(f"RAG search returned {result_count} results")
 
             return result
         except httpx.HTTPStatusError as e:
+            search_duration = time.time() - search_start_time
+            metrics.rag_search_duration_seconds.observe(search_duration)
+            metrics.rag_search_requests_total.labels(status='error').inc()
+            metrics.rag_search_errors_total.labels(error_type='http_error').inc()
             error_msg = f"Search error {e.response.status_code}: {e.response.text[:200]}"
             logger.error(error_msg)
             raise RAGServiceError(error_msg) from e
         except httpx.RequestError as e:
+            search_duration = time.time() - search_start_time
+            metrics.rag_search_duration_seconds.observe(search_duration)
+            metrics.rag_search_requests_total.labels(status='error').inc()
+            error_type = 'timeout' if isinstance(e, httpx.TimeoutException) else 'request_error'
+            metrics.rag_search_errors_total.labels(error_type=error_type).inc()
             error_msg = f"Request error during search: {str(e)}"
             logger.error(error_msg)
             raise RAGServiceError(error_msg) from e

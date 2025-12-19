@@ -1,5 +1,6 @@
 """Callback query handlers for the Telegram bot."""
 import logging
+from bot.metrics import callbacks_processed
 from telegram import Update
 from telegram.ext import ContextTypes
 
@@ -12,6 +13,8 @@ async def debug_callback_handler(
     """Debug callback handler for logging callback queries."""
     query = update.callback_query
     if query and update.effective_user:
+        prefix = (query.data or "unknown").split(":")[0]
+        callbacks_processed.labels(prefix=prefix).inc()
         logger.info(
             "DEBUG: Callback query received: %s from user %s",
             query.data,

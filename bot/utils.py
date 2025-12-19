@@ -8,6 +8,7 @@ from django.contrib.auth import get_user_model
 from telegram import Update
 
 from core.models import ChatSession, UserProfile
+from bot.metrics import new_users_total
 from core.config import TelegramConfig
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,7 @@ async def get_profile_and_session(update: Update) -> ChatSession:
             display_name=tg_user.full_name,
         )
         await sync_to_async(profile.save)()
+        new_users_total.inc()
 
     try:
         session = await sync_to_async(ChatSession.objects.get)(

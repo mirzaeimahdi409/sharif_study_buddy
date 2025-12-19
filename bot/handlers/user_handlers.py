@@ -1,5 +1,6 @@
 """Handlers for regular user interactions."""
 import logging
+from bot.metrics import messages_received, commands_processed, errors_total, messages_sent_total
 import time
 from telegram import Update
 from telegram.constants import ChatAction
@@ -15,19 +16,24 @@ logger = logging.getLogger(__name__)
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /start command."""
+    commands_processed.labels(command='start').inc()
     await get_profile_and_session(update)
     if update.message:
         await update.message.reply_text(WELCOME, parse_mode="HTML")
+        messages_sent_total.inc()
 
 
 async def help_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle /help command."""
+    commands_processed.labels(command='help').inc()
     if update.message:
         await update.message.reply_text(HELP_TEXT, parse_mode="HTML")
+        messages_sent_total.inc()
 
 
 async def reset_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Handle /reset command - reset chat session."""
+    commands_processed.labels(command='reset').inc()
     if not update.message:
         return ConversationHandler.END
 
@@ -56,6 +62,7 @@ async def reset_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
     await update.message.reply_text(
         "✅ گفتگوی جدید شروع شد. لطفاً سؤال خود را بپرسید.", parse_mode="HTML"
     )
+    messages_sent_total.inc()
 
     # Return END to exit any active conversation
     return ConversationHandler.END
@@ -63,6 +70,7 @@ async def reset_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle regular text messages from users."""
+    messages_received.inc()
     if not update.message:
         return
     session = await get_profile_and_session(update)
@@ -97,9 +105,12 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         )
         formatted = format_answer_markdown_to_html(answer)
         await update.message.reply_text(formatted, parse_mode="HTML")
+        messages_sent_total.inc()
     except Exception as e:
+        errors_total.labels(handler='text_message').inc()
         logger.exception(
             "Pipeline error for user %s (session %s): %s", user_id, session.id, e)
         await update.message.reply_text(
             "متاسفانه خطایی در پردازش پیام شما رخ داد. لطفاً کمی بعد دوباره تلاش کنید."
         )
+        messages_sent_total.inc()

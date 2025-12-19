@@ -1,5 +1,19 @@
 import logging
+import time
 from typing import Dict, List, TypedDict, Tuple, Any
+from core.metrics import (
+    ai_pipeline_requests_total,
+    ai_pipeline_errors_total,
+    ai_pipeline_duration_seconds,
+    rag_requests_total,
+    rag_errors_total,
+    rag_duration_seconds,
+    llm_requests_total,
+    llm_errors_total,
+    llm_duration_seconds,
+    llm_rag_usage_total,
+    llm_rag_context_usage_total,
+)
 from urllib.parse import urlparse
 from langgraph.graph import StateGraph, START, END
 from core.services.openrouter import OpenRouterLLM
@@ -45,9 +59,14 @@ async def retrieve_node(state: GraphState) -> GraphState:
     rag = RAGClient()
     snippets: List[str] = []
     debug = {"rag": {}}
+
+    rag_requests_total.labels(endpoint='search').inc()
+    start_time = time.time()
     try:
         # user_id is handled inside RAGClient (default fixed ID for now)
         res = await rag.search(query=state["question"], top_k=TOP_K)
+        elapsed_time = time.time() - start_time
+        rag_duration_seconds.labels(endpoint='search').observe(elapsed_time)
         debug["rag"] = res
         items = res.get("results") or res.get("data") or []
 
@@ -147,6 +166,9 @@ async def retrieve_node(state: GraphState) -> GraphState:
             snippets.append("\n".join(snippet_parts))
 
     except RAGServiceError as e:
+        rag_errors_total.labels(endpoint='search').inc()
+        elapsed_time = time.time() - start_time
+        rag_duration_seconds.labels(endpoint='search').observe(elapsed_time)
         snippets.append(messages.RAG_SERVICE_UNAVAILABLE.format(error=e))
 
     # Format context with clear separation between documents
@@ -175,10 +197,14 @@ async def generate_node(state: GraphState) -> GraphState:
     # Build context section with clear formatting
     context = state.get("context", "")
     context_section = ""
+    rag_context_was_provided = False  # Initialize the flag
     if context and context != messages.RAG_NO_DOCUMENTS_FOUND:
+        rag_context_was_provided = True  # Set flag to True
+        llm_rag_usage_total.labels(status='rag_used').inc()
         context_section = messages.GENERATION_CONTEXT_HEADER.format(
             context=context)
     else:
+        llm_rag_usage_total.labels(status='no_rag').inc()
         context_section = messages.GENERATION_NO_CONTEXT_FALLBACK
 
     llm_messages.append({
@@ -187,11 +213,34 @@ async def generate_node(state: GraphState) -> GraphState:
     })
     llm_messages.extend(state.get("history", []))
     llm_messages.append({"role": "user", "content": state["question"]})
-    response = await llm.ainvoke(llm_messages)
-    answer = response.content
+
+    llm_requests_total.labels(model_name=MODEL).inc()
+    start_time = time.time()
+    try:
+        response = await llm.ainvoke(llm_messages)
+        answer = response.content
+    except Exception as e:
+        llm_errors_total.labels(model_name=MODEL).inc()
+        logger.exception("LLM invocation failed for model %s", MODEL)
+        answer = messages.LLM_SERVICE_UNAVAILABLE
+    finally:
+        elapsed_time = time.time() - start_time
+        llm_duration_seconds.labels(model_name=MODEL).observe(elapsed_time)
 
     # Post-process: Convert source references to clickable HTML links if not already formatted
     answer = _convert_sources_to_html_links(answer, state.get("context", ""))
+
+    # Check if the final answer contains citations, but only if RAG context was provided
+    if rag_context_was_provided:
+        # A simple check for source references in the final answer.
+        # This could be the text '[منبع' or the HTML link tag.
+        # The `_convert_sources_to_html_links` function adds a specific section header.
+        # We also need to import `re` module for this.
+        import re
+        if messages.CITATION_SOURCES_SECTION in answer or re.search(r'\[منبع', answer):
+            llm_rag_context_usage_total.labels(status='cited').inc()
+        else:
+            llm_rag_context_usage_total.labels(status='not_cited').inc()
 
     state["answer"] = answer
     return state
@@ -312,7 +361,21 @@ async def run_graph(session: ChatSession, user_text: str) -> Tuple[str, Dict]:
     graph.add_edge("retrieve", "generate")
     graph.add_edge("generate", END)
     app = graph.compile()
-    final: GraphState = await app.ainvoke(state)
-    answer = final.get("answer", "")
-    await _save(session, "assistant", answer)
-    return answer, final.get("debug", {})
+
+    pipeline_name = "default_assistant"
+    ai_pipeline_requests_total.labels(pipeline_name=pipeline_name).inc()
+    start_time = time.time()
+    try:
+        final: GraphState = await app.ainvoke(state)
+        answer = final.get("answer", "")
+        await _save(session, "assistant", answer)
+        return answer, final.get("debug", {})
+    except Exception as e:
+        ai_pipeline_errors_total.labels(pipeline_name=pipeline_name).inc()
+        logger.exception("AI pipeline '%s' failed", pipeline_name)
+        # Re-raise the exception to be handled by the caller (e.g., telegram handler)
+        raise
+    finally:
+        elapsed_time = time.time() - start_time
+        ai_pipeline_duration_seconds.labels(
+            pipeline_name=pipeline_name).observe(elapsed_time)

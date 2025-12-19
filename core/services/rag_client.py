@@ -3,7 +3,6 @@ import logging
 import time
 import asyncio
 from typing import Any, Dict, Optional, List
-from urllib.parse import urlparse
 import httpx
 from core.exceptions import RAGServiceError
 from core.config import RAGConfig
@@ -66,29 +65,9 @@ class RAGClient:
             follow_redirects=True,
         )
 
-        # Parse base_url for diagnostics
-        parsed_init_url = urlparse(self.base_url)
-        init_host = parsed_init_url.hostname
-        init_port = parsed_init_url.port or (443 if parsed_init_url.scheme == 'https' else 80)
-        init_scheme = parsed_init_url.scheme
-        
-        logger.info(
-            f"🔧 RAGClient initialized - Connecting to {init_scheme}://{init_host}:{init_port}",
-            extra={
-                "base_url": self.base_url,
-                "host": init_host,
-                "port": init_port,
-                "scheme": init_scheme,
-                "timeout": self.timeout,
-                "connect_timeout": client_timeout.connect,
-                "read_timeout": client_timeout.read,
-                "max_connections": limits.max_connections,
-                "max_keepalive": limits.max_keepalive_connections,
-                "has_api_key": bool(self.api_key),
-                "user_id": self.default_user_id,
-                "microservice": self.microservice,
-            }
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"RAGClient initialized with base_url: {self.base_url[:50]}...")
 
     def _headers(self) -> Dict[str, str]:
         headers: Dict[str, str] = {"Content-Type": "application/json"}
@@ -386,37 +365,9 @@ class RAGClient:
 
         url = f"{self.base_url}/knowledge/documents/ingest-channel-message/"
 
-        # Parse URL for diagnostics
-        parsed_url = urlparse(url)
-        host = parsed_url.hostname
-        port = parsed_url.port or (443 if parsed_url.scheme == 'https' else 80)
-        scheme = parsed_url.scheme
-
-        # Detailed logging before request
-        logger.info(
-            f"🔵 RAG ingest channel message - Starting request to {scheme}://{host}:{port}",
-            extra={
-                "url": url,
-                "base_url": self.base_url,
-                "host": host,
-                "port": port,
-                "scheme": scheme,
-                "timeout": self.timeout,
-                "title": title[:100] if title else None,
-                "text_content_length": len(text_content) if text_content else 0,
-                "source_url": source_url,
-                "user_id": final_user_id,
-                "microservice": self.microservice,
-            }
-        )
-
-        # Log payload size for debugging
-        import json
-        try:
-            payload_size = len(json.dumps(payload, ensure_ascii=False))
-            logger.debug(f"Request payload size: {payload_size} bytes")
-        except Exception:
-            pass
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                f"RAG ingest channel message: {title}, source_url: {source_url}")
 
         # Retry logic for connection errors
         max_retries = int(os.getenv("RAG_MAX_RETRIES", "3"))
@@ -425,36 +376,14 @@ class RAGClient:
 
         for attempt in range(1, max_retries + 1):
             try:
-                logger.info(
-                    f"🌐 Attempting connection to {scheme}://{host}:{port} (attempt {attempt}/{max_retries})",
-                    extra={
-                        "attempt": attempt,
-                        "max_retries": max_retries,
-                        "host": host,
-                        "port": port,
-                        "scheme": scheme,
-                        "url": url,
-                        "connect_timeout": self._client.timeout.connect if hasattr(self._client.timeout, 'connect') else self.timeout,
-                    }
-                )
-                logger.debug(f"Client timeout: {self._client.timeout}")
-                logger.debug(f"Client base_url: {self._client.base_url}")
-
                 resp = await self._client.post(url, json=payload, headers=self._headers())
-
-                logger.info(
-                    f"✅ RAG ingest channel message - Response received: {resp.status_code}",
-                    extra={"status_code": resp.status_code, "url": url}
-                )
-
                 resp.raise_for_status()
                 result = resp.json()
 
-                doc_id = result.get("id") or result.get("document_id")
-                logger.info(
-                    f"✅ RAG ingest channel message successful, doc_id: {doc_id} (attempt {attempt})",
-                    extra={"doc_id": doc_id, "url": url, "attempt": attempt}
-                )
+                if logger.isEnabledFor(logging.DEBUG):
+                    doc_id = result.get("id") or result.get("document_id")
+                    logger.debug(
+                        f"RAG ingest channel message successful, doc_id: {doc_id}")
 
                 return result
             except (httpx.ConnectError, httpx.NetworkError) as e:
@@ -462,92 +391,25 @@ class RAGClient:
                 if attempt < max_retries:
                     wait_time = retry_delay * \
                         (2 ** (attempt - 1))  # Exponential backoff
-                    logger.warning(
-                        f"⚠️ Connection error on attempt {attempt}/{max_retries} to {scheme}://{host}:{port}, retrying in {wait_time:.1f}s. Error: {str(e)}",
-                        extra={
-                            "attempt": attempt,
-                            "max_retries": max_retries,
-                            "wait_time": wait_time,
-                            "host": host,
-                            "port": port,
-                            "scheme": scheme,
-                            "url": url,
-                            "error": str(e),
-                            "error_type": type(e).__name__,
-                            "exception_repr": repr(e),
-                        }
-                    )
                     await asyncio.sleep(wait_time)
                 else:
-                    # Last attempt failed
-                    error_msg = f"Connection error during channel message ingest after {max_retries} attempts to {scheme}://{host}:{port}: {str(e)}"
-                    logger.error(
-                        f"🔴 RAG ingest channel message - Connection error (all {max_retries} attempts failed) to {scheme}://{host}:{port}. Error: {str(e)}",
-                        extra={
-                            "url": url,
-                            "base_url": self.base_url,
-                            "host": host,
-                            "port": port,
-                            "scheme": scheme,
-                            "timeout": self.timeout,
-                            "attempts": max_retries,
-                            "exception_type": type(e).__name__,
-                            "exception_args": str(e.args) if hasattr(e, 'args') else None,
-                            "exception_repr": repr(e),
-                            "full_url": url,
-                        },
-                        exc_info=True
-                    )
+                    error_msg = f"Connection error during channel message ingest after {max_retries} attempts: {str(e)}"
+                    logger.error(error_msg)
                     raise RAGServiceError(error_msg) from e
             except httpx.HTTPStatusError as e:
                 # HTTP errors are not retried (4xx, 5xx)
                 error_msg = f"Ingest channel message error {e.response.status_code}: {e.response.text[:200]}"
-                logger.error(
-                    f"❌ RAG ingest channel message - HTTP error: {error_msg}",
-                    extra={
-                        "status_code": e.response.status_code,
-                        "url": url,
-                        "base_url": self.base_url,
-                        "host": host,
-                        "port": port,
-                        "response_text": e.response.text[:500] if e.response.text else None,
-                        "headers": dict(e.response.headers) if hasattr(e.response, 'headers') else None,
-                    },
-                    exc_info=True
-                )
+                logger.error(error_msg)
                 raise RAGServiceError(error_msg) from e
             except httpx.TimeoutException as e:
                 # Timeout errors are retried
                 last_exception = e
                 if attempt < max_retries:
                     wait_time = retry_delay * (2 ** (attempt - 1))
-                    logger.warning(
-                        f"⏱️ Timeout on attempt {attempt}/{max_retries}, retrying in {wait_time:.1f}s",
-                        extra={
-                            "attempt": attempt,
-                            "max_retries": max_retries,
-                            "wait_time": wait_time,
-                            "timeout": self.timeout,
-                            "host": host,
-                            "port": port,
-                        }
-                    )
                     await asyncio.sleep(wait_time)
                 else:
                     error_msg = f"Timeout during channel message ingest after {max_retries} attempts (timeout={self.timeout}s): {str(e)}"
-                    logger.error(
-                        f"⏱️ RAG ingest channel message - Timeout (all {max_retries} attempts failed): {error_msg}",
-                        extra={
-                            "url": url,
-                            "base_url": self.base_url,
-                            "host": host,
-                            "port": port,
-                            "timeout": self.timeout,
-                            "attempts": max_retries,
-                            "exception_type": type(e).__name__,
-                        },
-                        exc_info=True
-                    )
+                    logger.error(error_msg)
                     raise RAGServiceError(error_msg) from e
             except httpx.RequestError as e:
                 # Other request errors - retry if it's a network issue
@@ -555,52 +417,17 @@ class RAGClient:
                     last_exception = e
                     if attempt < max_retries:
                         wait_time = retry_delay * (2 ** (attempt - 1))
-                        logger.warning(
-                            f"⚠️ Request error on attempt {attempt}/{max_retries}, retrying in {wait_time:.1f}s",
-                            extra={
-                                "attempt": attempt,
-                                "max_retries": max_retries,
-                                "wait_time": wait_time,
-                                "error": str(e),
-                                "error_type": type(e).__name__,
-                            }
-                        )
                         await asyncio.sleep(wait_time)
                         continue
 
                 # Non-retryable request error or last attempt
                 error_msg = f"Request error during channel message ingest: {str(e)}"
-                logger.error(
-                    f"❌ RAG ingest channel message - Request error: {error_msg}",
-                    extra={
-                        "url": url,
-                        "base_url": self.base_url,
-                        "host": host,
-                        "port": port,
-                        "timeout": self.timeout,
-                        "attempt": attempt,
-                        "exception_type": type(e).__name__,
-                        "exception_args": str(e.args) if hasattr(e, 'args') else None,
-                        "request_url": str(e.request.url) if hasattr(e, 'request') and e.request else None,
-                    },
-                    exc_info=True
-                )
+                logger.error(error_msg)
                 raise RAGServiceError(error_msg) from e
             except Exception as e:
                 # Unexpected errors are not retried
                 error_msg = f"Unexpected error during channel message ingest: {str(e)}"
-                logger.error(
-                    f"💥 RAG ingest channel message - Unexpected error: {error_msg}",
-                    extra={
-                        "url": url,
-                        "base_url": self.base_url,
-                        "host": host,
-                        "port": port,
-                        "attempt": attempt,
-                        "exception_type": type(e).__name__,
-                    },
-                    exc_info=True
-                )
+                logger.error(error_msg, exc_info=True)
                 raise RAGServiceError(error_msg) from e
 
         # This should never be reached, but just in case
@@ -736,81 +563,23 @@ class RAGClient:
     ) -> Dict[str, Any]:
         """Synchronous wrapper for ingest_channel_message method."""
         import asyncio
-        import threading
-        import time
         from concurrent.futures import ThreadPoolExecutor
 
-        main_thread_id = threading.current_thread().ident
-        logger.info(
-            "🔄 Starting sync wrapper for ingest_channel_message",
-            extra={
-                "main_thread_id": main_thread_id,
-                "title": title[:100] if title else None,
-                "source_url": source_url,
-                "base_url": self.base_url,
-            }
-        )
-
-        start_time = time.time()
-
         def run_in_thread():
-            thread_id = threading.current_thread().ident
-            logger.debug(
-                f"📌 Async execution started in thread {thread_id}",
-                extra={"thread_id": thread_id,
-                       "main_thread_id": main_thread_id}
-            )
-
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                logger.debug(f"Event loop created in thread {thread_id}")
-                result = loop.run_until_complete(
+                return loop.run_until_complete(
                     self.ingest_channel_message(
                         title, text_content, published_at, source_url, metadata, user_id
                     )
                 )
-                logger.debug(
-                    f"Async execution completed in thread {thread_id}")
-                return result
-            except Exception as e:
-                logger.error(
-                    f"❌ Exception in async thread {thread_id}: {type(e).__name__}: {str(e)}",
-                    extra={"thread_id": thread_id,
-                           "exception_type": type(e).__name__},
-                    exc_info=True
-                )
-                raise
             finally:
                 loop.close()
-                logger.debug(f"Event loop closed in thread {thread_id}")
 
-        try:
-            with ThreadPoolExecutor(max_workers=1) as executor:
-                logger.debug("ThreadPoolExecutor created, submitting task")
-                future = executor.submit(run_in_thread)
-                logger.debug("Task submitted, waiting for result")
-                result = future.result()
-
-                duration = time.time() - start_time
-                logger.info(
-                    f"✅ Sync wrapper completed successfully in {duration:.2f}s",
-                    extra={"duration": duration,
-                           "main_thread_id": main_thread_id}
-                )
-                return result
-        except Exception as e:
-            duration = time.time() - start_time
-            logger.error(
-                f"❌ Sync wrapper failed after {duration:.2f}s: {type(e).__name__}: {str(e)}",
-                extra={
-                    "duration": duration,
-                    "main_thread_id": main_thread_id,
-                    "exception_type": type(e).__name__,
-                },
-                exc_info=True
-            )
-            raise
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(run_in_thread)
+            return future.result()
 
     def reprocess_document_sync(self, doc_id: str) -> Dict[str, Any]:
         """Synchronous wrapper for reprocess_document method."""

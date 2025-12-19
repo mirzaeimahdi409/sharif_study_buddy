@@ -68,30 +68,48 @@ def bot_health_check(request: HttpRequest) -> HttpResponse:
     return HttpResponse("NOT READY", status=503)
 
 
+@csrf_exempt
 def prometheus_metrics(request: HttpRequest) -> HttpResponse:
     """
     Prometheus metrics endpoint.
     Exposes all metrics in Prometheus format.
     """
-    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
-    from asgiref.sync import sync_to_async
-    from core.models import ChatSession, UserProfile
-    from core.services import metrics as metrics_module
-    
+    try:
+        from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    except ImportError:
+        logger.error("prometheus_client not installed")
+        return HttpResponseBadRequest("Prometheus client not available", status=503)
+
+    # Only allow GET requests (Prometheus uses GET)
+    if request.method != 'GET':
+        return HttpResponseBadRequest("Only GET method is allowed")
+
     # Update gauge metrics (active users, total users)
     try:
-        from django.db import connection
+        from core.models import ChatSession, UserProfile
+        from core.services import metrics as metrics_module
+
         # Get active users count (users with active sessions)
-        active_sessions = ChatSession.objects.filter(is_active=True).values('user_profile_id').distinct()
+        active_sessions = ChatSession.objects.filter(
+            is_active=True).values('user_profile_id').distinct()
         active_users_count = active_sessions.count()
         metrics_module.active_users_total.set(active_users_count)
-        
+
         # Get total users count
         total_users_count = UserProfile.objects.count()
         metrics_module.total_users_total.set(total_users_count)
     except Exception as e:
-        logger.warning(f"Failed to update user metrics: {e}")
-    
+        logger.warning(f"Failed to update user metrics: {e}", exc_info=True)
+
     # Generate Prometheus metrics output
-    output = generate_latest()
-    return HttpResponse(output, content_type=CONTENT_TYPE_LATEST)
+    try:
+        output = generate_latest()
+        # generate_latest() returns bytes
+        if not isinstance(output, bytes):
+            output = str(output).encode('utf-8')
+
+        response = HttpResponse(output, content_type=CONTENT_TYPE_LATEST)
+        return response
+    except Exception as e:
+        logger.error(f"Error generating metrics: {e}", exc_info=True)
+        return HttpResponseBadRequest(f"Error generating metrics: {str(e)}")

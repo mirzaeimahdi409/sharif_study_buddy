@@ -2,9 +2,12 @@
 Celery tasks for background processing.
 """
 import logging
+import asyncio
 from celery import shared_task
 from django.core.cache import cache
-from .models import KnowledgeDocument
+from django.conf import settings
+from telegram import Bot
+from .models import KnowledgeDocument, UserProfile, ChatSession
 from .services.rag_client import RAGClient
 from .exceptions import RAGServiceError
 
@@ -193,7 +196,6 @@ def cleanup_old_chat_sessions(days_old: int = 90) -> dict:
     """
     from django.utils import timezone
     from datetime import timedelta
-    from .models import ChatSession
 
     cutoff_date = timezone.now() - timedelta(days=days_old)
     deleted_sessions = ChatSession.objects.filter(
@@ -208,3 +210,87 @@ def cleanup_old_chat_sessions(days_old: int = 90) -> dict:
         "deleted_sessions": deleted_sessions[0],
         "cutoff_date": cutoff_date.isoformat()
     }
+
+
+@shared_task
+def broadcast_message_task(message_text: str, segment: str = "all", days: int = 0) -> dict:
+    """
+    Broadcast a message to users.
+
+    Args:
+        message_text: Content of the message
+        segment: Target segment ("all", "new", "active")
+        days: Number of days for filter (if applicable)
+
+    Returns:
+        Dictionary with result statistics
+    """
+    from django.utils import timezone
+    from datetime import timedelta
+
+    # Filter users
+    users = UserProfile.objects.all()
+
+    if segment == "new" and days > 0:
+        cutoff = timezone.now() - timedelta(days=days)
+        users = users.filter(created_at__gte=cutoff)
+    elif segment == "active" and days > 0:
+        cutoff = timezone.now() - timedelta(days=days)
+        users = users.filter(sessions__updated_at__gte=cutoff).distinct()
+
+    user_ids = list(users.values_list("telegram_id", flat=True))
+    total_users = len(user_ids)
+
+    if total_users == 0:
+        return {"status": "no_users", "count": 0}
+
+    async def _send_all():
+        bot = Bot(token=settings.TELEGRAM_BOT_TOKEN)
+        success = 0
+        failed = 0
+        for user_id in user_ids:
+            try:
+                await bot.send_message(chat_id=user_id, text=message_text)
+                success += 1
+                await asyncio.sleep(0.05)  # Rate limit
+            except Exception as e:
+                failed += 1
+                logger.warning(f"Failed to send broadcast to {user_id}: {e}")
+        return success, failed
+
+    try:
+        # Check if there is an existing event loop
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            # If loop is running, we can't use run_until_complete easily without nesting issues
+            # But usually Celery tasks are not async unless configured so.
+            # If we are here, likely no loop is running or we are in a sync worker.
+            # However, if we are in an async context, we should use create_task, but shared_task is sync wrapper.
+            # Let's try asyncio.run() which creates a new loop.
+            pass
+
+        # Use asyncio.run() which handles loop creation/cleanup
+        # Note: This will raise RuntimeError if a loop is already running in the thread.
+        try:
+            success, failed = asyncio.run(_send_all())
+        except RuntimeError:
+            # Fallback for when loop exists (e.g. if celery worker has loop)
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            success, failed = loop.run_until_complete(_send_all())
+            loop.close()
+
+        logger.info(f"Broadcast completed. Success: {success}, Failed: {failed}")
+        return {
+            "status": "success",
+            "total": total_users,
+            "sent": success,
+            "failed": failed
+        }
+    except Exception as e:
+        logger.exception(f"Broadcast task failed: {e}")
+        return {"status": "error", "error": str(e)}

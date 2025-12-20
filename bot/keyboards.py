@@ -9,6 +9,8 @@ def admin_main_keyboard() -> InlineKeyboardMarkup:
                               callback_data="admin:docs")],
         [InlineKeyboardButton("📡 مدیریت کانال‌ها",
                               callback_data="admin:channels")],
+        [InlineKeyboardButton("📢 ارسال پیام همگانی",
+                              callback_data="admin:broadcast")],
         [InlineKeyboardButton(
             "📊 آمار کلی بات", callback_data="admin:stats")],
         [InlineKeyboardButton("❌ خروج از حالت ادمین",
@@ -51,5 +53,31 @@ def admin_channels_keyboard() -> InlineKeyboardMarkup:
             "📜 لیست کانال‌ها", callback_data="admin:channels:list")],
         [InlineKeyboardButton(
             "⬅️ بازگشت", callback_data="admin:back_main")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def admin_broadcast_keyboard() -> InlineKeyboardMarkup:
+    """Admin broadcast segment selection keyboard."""
+    keyboard = [
+        [InlineKeyboardButton(
+            "👥 همه کاربران", callback_data="admin:broadcast:all")],
+        [InlineKeyboardButton(
+            "🆕 کاربران جدید (فیلتر روز)", callback_data="admin:broadcast:new")],
+        [InlineKeyboardButton(
+            "💬 کاربران فعال (فیلتر روز)", callback_data="admin:broadcast:active")],
+        [InlineKeyboardButton(
+            "⬅️ بازگشت", callback_data="admin:back_main")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def admin_broadcast_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Admin broadcast confirmation keyboard."""
+    keyboard = [
+        [InlineKeyboardButton(
+            "✅ ارسال", callback_data="admin:broadcast:confirm")],
+        [InlineKeyboardButton(
+            "❌ انصراف", callback_data="admin:broadcast:cancel")],
     ]
     return InlineKeyboardMarkup(keyboard)

@@ -197,7 +197,7 @@ async def generate_node(state: GraphState) -> GraphState:
         "content": messages.SYSTEM_PROMPT + context_section
     })
     llm_messages.extend(state.get("history", []))
-    
+
     # Handle multimodal input (image + text)
     if state.get("image_data"):
         user_content = [
@@ -210,29 +210,34 @@ async def generate_node(state: GraphState) -> GraphState:
         llm_messages.append({"role": "user", "content": user_content})
     else:
         llm_messages.append({"role": "user", "content": state["question"]})
-    
+
     # Track LLM invocation
     llm_start_time = time.time()
     try:
         response = await llm.ainvoke(llm_messages)
         answer = response.content
         llm_duration = time.time() - llm_start_time
-        
+
         # Track LLM success
-        metrics.llm_invocations_total.labels(model=MODEL, status='success').inc()
-        metrics.llm_invocation_duration_seconds.labels(model=MODEL).observe(llm_duration)
-        
+        metrics.llm_invocations_total.labels(
+            model=MODEL, status='success').inc()
+        metrics.llm_invocation_duration_seconds.labels(
+            model=MODEL).observe(llm_duration)
+
         # Track response tokens if available
         if hasattr(response, 'response_metadata') and response.response_metadata:
-            tokens = response.response_metadata.get('token_usage', {}).get('completion_tokens')
+            tokens = response.response_metadata.get(
+                'token_usage', {}).get('completion_tokens')
             if tokens:
                 metrics.llm_response_tokens.labels(model=MODEL).observe(tokens)
     except Exception as e:
         llm_duration = time.time() - llm_start_time
         metrics.llm_invocations_total.labels(model=MODEL, status='error').inc()
-        metrics.llm_invocation_duration_seconds.labels(model=MODEL).observe(llm_duration)
+        metrics.llm_invocation_duration_seconds.labels(
+            model=MODEL).observe(llm_duration)
         error_type = type(e).__name__
-        metrics.llm_errors_total.labels(model=MODEL, error_type=error_type).inc()
+        metrics.llm_errors_total.labels(
+            model=MODEL, error_type=error_type).inc()
         raise
 
     # Post-process: Convert source references to clickable HTML links if not already formatted
@@ -243,10 +248,12 @@ async def generate_node(state: GraphState) -> GraphState:
         sources_used = metrics.detect_rag_source_usage(answer, context)
         if sources_used:
             metrics.rag_sources_used_total.labels(used='true').inc()
-            metrics.rag_context_relevant_used_total.labels(relevant_used='true').inc()
+            metrics.rag_context_relevant_used_total.labels(
+                relevant_used='true').inc()
         else:
             metrics.rag_sources_used_total.labels(used='false').inc()
-            metrics.rag_context_relevant_used_total.labels(relevant_used='false').inc()
+            metrics.rag_context_relevant_used_total.labels(
+                relevant_used='false').inc()
             metrics.rag_context_unrelated_total.labels(unrelated='true').inc()
     else:
         metrics.rag_sources_used_total.labels(used='false').inc()
@@ -372,7 +379,7 @@ async def run_graph(session: ChatSession, user_text: str, image_data: Optional[s
     graph.add_edge("retrieve", "generate")
     graph.add_edge("generate", END)
     app = graph.compile()
-    
+
     # Configure LangSmith callbacks for LangGraph
     invoke_config = get_langgraph_config(
         tags=["langgraph", "rag-pipeline"],
@@ -385,7 +392,7 @@ async def run_graph(session: ChatSession, user_text: str, image_data: Optional[s
             "rag_top_k": TOP_K,
         }
     )
-    
+
     try:
         if invoke_config:
             final: GraphState = await app.ainvoke(state, config=invoke_config)
@@ -393,12 +400,12 @@ async def run_graph(session: ChatSession, user_text: str, image_data: Optional[s
             final: GraphState = await app.ainvoke(state)
         answer = final.get("answer", "")
         await _save(session, "assistant", answer)
-        
+
         # Track successful pipeline execution
         pipeline_duration = time.time() - pipeline_start_time
         metrics.pipeline_executions_total.labels(status='success').inc()
         metrics.pipeline_execution_duration_seconds.observe(pipeline_duration)
-        
+
         return answer, final.get("debug", {})
     except RAGServiceError as e:
         pipeline_duration = time.time() - pipeline_start_time
@@ -410,6 +417,7 @@ async def run_graph(session: ChatSession, user_text: str, image_data: Optional[s
         pipeline_duration = time.time() - pipeline_start_time
         metrics.pipeline_executions_total.labels(status='error').inc()
         metrics.pipeline_execution_duration_seconds.observe(pipeline_duration)
-        error_type = 'llm_error' if 'llm' in str(type(e)).lower() or 'openrouter' in str(type(e)).lower() else 'general_error'
+        error_type = 'llm_error' if 'llm' in str(type(e)).lower(
+        ) or 'openrouter' in str(type(e)).lower() else 'general_error'
         metrics.pipeline_errors_total.labels(error_type=error_type).inc()
         raise

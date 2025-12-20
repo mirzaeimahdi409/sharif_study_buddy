@@ -2,16 +2,18 @@
 import logging
 import time
 from typing import TYPE_CHECKING
+from datetime import timedelta
 
 from asgiref.sync import sync_to_async
 from django.utils import timezone
+from django.db.models import Count
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
 from core.models import ChatMessage, ChatSession, KnowledgeDocument, UserProfile
 from core.services.rag_client import RAGClient
 from core.exceptions import RAGServiceError
-from core.tasks import push_document_to_rag, reprocess_document_in_rag
+from core.tasks import push_document_to_rag, reprocess_document_in_rag, broadcast_message_task
 from core.services import metrics
 from bot.constants import (
     ADMIN_MAIN,
@@ -24,12 +26,18 @@ from bot.constants import (
     ADMIN_CHANNELS_ADD_USERNAME,
     ADMIN_CHANNELS_REMOVE_USERNAME,
     ADMIN_CHANNELS_ADD_MESSAGE_COUNT,
+    ADMIN_BROADCAST_MENU,
+    ADMIN_BROADCAST_FILTER_INPUT,
+    ADMIN_BROADCAST_MESSAGE_INPUT,
+    ADMIN_BROADCAST_CONFIRM,
 )
 from bot.utils import get_admin_ids, escape_markdown_v2
 from bot.keyboards import (
     admin_main_keyboard,
     admin_docs_keyboard,
     admin_channels_keyboard,
+    admin_broadcast_keyboard,
+    admin_broadcast_confirm_keyboard,
 )
 
 if TYPE_CHECKING:
@@ -115,6 +123,14 @@ async def admin_main_callback_handler(
         await _handle_stats(query)
         return ADMIN_MAIN
 
+    if data == "admin:broadcast":
+        await query.edit_message_text(
+            "📢 ارسال پیام همگانی\n\n"
+            "لطفاً گروه هدف خود را انتخاب کنید:",
+            reply_markup=admin_broadcast_keyboard(),
+        )
+        return ADMIN_BROADCAST_MENU
+
     if data == "admin:push_unindexed":
         await _handle_push_unindexed(query)
         return ADMIN_MAIN
@@ -161,6 +177,182 @@ async def admin_main_callback_handler(
         return ADMIN_LIST_DOCS
 
     return ADMIN_MAIN
+
+
+async def admin_broadcast_menu_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Handle broadcast menu selection."""
+    query = update.callback_query
+    if not query:
+        return ConversationHandler.END
+
+    data = query.data or ""
+    try:
+        await query.answer()
+    except Exception:
+        pass
+
+    if data == "admin:back_main":
+        await query.edit_message_text(
+            "👑 پنل ادمین:", reply_markup=admin_main_keyboard()
+        )
+        return ADMIN_MAIN
+
+    if data == "admin:broadcast:all":
+        context.user_data["broadcast_segment"] = "all"
+        await query.edit_message_text(
+            "✍️ لطفاً متن پیام خود را ارسال کنید:\n\n"
+            "(این پیام برای همه کاربران ارسال خواهد شد)"
+        )
+        return ADMIN_BROADCAST_MESSAGE_INPUT
+
+    if data == "admin:broadcast:new":
+        context.user_data["broadcast_segment"] = "new"
+        await query.edit_message_text(
+            "🕒 تعداد روزهای گذشته را وارد کنید:\n"
+            "(کاربرانی که در این تعداد روز اخیر عضو شده‌اند)"
+        )
+        return ADMIN_BROADCAST_FILTER_INPUT
+
+    if data == "admin:broadcast:active":
+        context.user_data["broadcast_segment"] = "active"
+        await query.edit_message_text(
+            "🕒 تعداد روزهای گذشته را وارد کنید:\n"
+            "(کاربرانی که در این تعداد روز اخیر فعالیت داشته‌اند)"
+        )
+        return ADMIN_BROADCAST_FILTER_INPUT
+
+    return ADMIN_BROADCAST_MENU
+
+
+async def admin_broadcast_filter_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Handle broadcast filter input (days)."""
+    if not update.message or not update.message.text:
+        return ADMIN_BROADCAST_FILTER_INPUT
+
+    try:
+        days = int(update.message.text.strip())
+        if days <= 0:
+            raise ValueError
+    except ValueError:
+        await update.message.reply_text("❌ لطفاً یک عدد صحیح مثبت وارد کنید.")
+        return ADMIN_BROADCAST_FILTER_INPUT
+
+    context.user_data["broadcast_days"] = days
+    segment = context.user_data.get("broadcast_segment")
+    segment_text = "جدید" if segment == "new" else "فعال"
+
+    await update.message.reply_text(
+        f"✍️ لطفاً متن پیام خود را برای کاربران {segment_text} (در {days} روز اخیر) ارسال کنید:"
+    )
+    return ADMIN_BROADCAST_MESSAGE_INPUT
+
+
+async def admin_broadcast_message_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Handle broadcast message content input."""
+    if not update.message or not update.message.text:
+        return ADMIN_BROADCAST_MESSAGE_INPUT
+
+    message_content = update.message.text.strip()
+    if not message_content:
+        await update.message.reply_text("❌ متن پیام نمی‌تواند خالی باشد.")
+        return ADMIN_BROADCAST_MESSAGE_INPUT
+
+    context.user_data["broadcast_message"] = message_content
+    segment = context.user_data.get("broadcast_segment", "all")
+    days = context.user_data.get("broadcast_days", 0)
+
+    # Calculate recipient count
+    count = 0
+    if segment == "all":
+        count = await sync_to_async(UserProfile.objects.count)()
+    elif segment == "new":
+        cutoff = timezone.now() - timedelta(days=days)
+        count = await sync_to_async(UserProfile.objects.filter(created_at__gte=cutoff).count)()
+    elif segment == "active":
+        cutoff = timezone.now() - timedelta(days=days)
+        # Users with sessions or messages in the last N days
+        # We can use ChatSession.updated_at
+        count = await sync_to_async(
+            UserProfile.objects.filter(sessions__updated_at__gte=cutoff).distinct().count
+        )()
+
+    context.user_data["broadcast_count"] = count
+
+    await update.message.reply_text(
+        f"📢 پیش‌نمایش ارسال پیام:\n\n"
+        f"👥 گیرندگان: {count} نفر\n"
+        f"📝 متن پیام:\n{message_content[:100]}...\n\n"
+        "آیا از ارسال این پیام اطمینان دارید؟",
+        reply_markup=admin_broadcast_confirm_keyboard()
+    )
+    return ADMIN_BROADCAST_CONFIRM
+
+
+async def admin_broadcast_confirm_handler(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> int:
+    """Handle broadcast confirmation."""
+    query = update.callback_query
+    if not query:
+        return ConversationHandler.END
+
+    data = query.data or ""
+    try:
+        await query.answer()
+    except Exception:
+        pass
+
+    if data == "admin:broadcast:cancel":
+        # Clear data
+        context.user_data.pop("broadcast_segment", None)
+        context.user_data.pop("broadcast_days", None)
+        context.user_data.pop("broadcast_message", None)
+        context.user_data.pop("broadcast_count", None)
+        await query.edit_message_text(
+            "❌ ارسال پیام لغو شد.\n👑 پنل ادمین:",
+            reply_markup=admin_main_keyboard()
+        )
+        return ADMIN_MAIN
+
+    if data == "admin:broadcast:confirm":
+        segment = context.user_data.get("broadcast_segment")
+        days = context.user_data.get("broadcast_days")
+        message_content = context.user_data.get("broadcast_message")
+        count = context.user_data.get("broadcast_count", 0)
+
+        # Trigger task
+        try:
+            broadcast_message_task.delay(
+                message_text=message_content,
+                segment=segment,
+                days=days
+            )
+            await query.edit_message_text(
+                f"✅ عملیات ارسال برای {count} کاربر آغاز شد.\n"
+                "این عملیات ممکن است کمی زمان ببرد.",
+                reply_markup=admin_main_keyboard()
+            )
+        except Exception as e:
+            logger.error(f"Failed to start broadcast task: {e}")
+            await query.edit_message_text(
+                "❌ خطا در شروع عملیات ارسال.",
+                reply_markup=admin_main_keyboard()
+            )
+
+        # Clear data
+        context.user_data.pop("broadcast_segment", None)
+        context.user_data.pop("broadcast_days", None)
+        context.user_data.pop("broadcast_message", None)
+        context.user_data.pop("broadcast_count", None)
+        return ADMIN_MAIN
+
+    return ADMIN_BROADCAST_CONFIRM
 
 
 async def admin_new_doc_title_handler(

@@ -23,6 +23,10 @@ from bot.constants import (
     ADMIN_CHANNELS_ADD_USERNAME,
     ADMIN_CHANNELS_REMOVE_USERNAME,
     ADMIN_CHANNELS_ADD_MESSAGE_COUNT,
+    ADMIN_BROADCAST_MENU,
+    ADMIN_BROADCAST_FILTER_INPUT,
+    ADMIN_BROADCAST_MESSAGE_INPUT,
+    ADMIN_BROADCAST_CONFIRM,
 )
 from bot.handlers.admin_handlers import (
     admin_entry_handler,
@@ -36,6 +40,10 @@ from bot.handlers.admin_handlers import (
     admin_channels_remove_username_handler,
     admin_channels_add_message_count_handler,
     admin_cancel_handler,
+    admin_broadcast_menu_handler,
+    admin_broadcast_filter_handler,
+    admin_broadcast_message_handler,
+    admin_broadcast_confirm_handler,
 )
 from bot.handlers.user_handlers import (
     start_handler,
@@ -129,6 +137,22 @@ class SharifBot:
                 ADMIN_CHANNELS_ADD_MESSAGE_COUNT: [
                     MessageHandler(filters.TEXT & ~filters.COMMAND,
                                    admin_channels_add_message_count_handler)
+                ],
+                ADMIN_BROADCAST_MENU: [
+                    CallbackQueryHandler(
+                        admin_broadcast_menu_handler, pattern=r"^admin:broadcast:")
+                ],
+                ADMIN_BROADCAST_FILTER_INPUT: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND,
+                                   admin_broadcast_filter_handler)
+                ],
+                ADMIN_BROADCAST_MESSAGE_INPUT: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND,
+                                   admin_broadcast_message_handler)
+                ],
+                ADMIN_BROADCAST_CONFIRM: [
+                    CallbackQueryHandler(
+                        admin_broadcast_confirm_handler, pattern=r"^admin:broadcast:")
                 ],
             },
             fallbacks=[

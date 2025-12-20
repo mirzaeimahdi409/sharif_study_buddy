@@ -115,7 +115,7 @@ class OpenRouterLLM(LLM):
 
     def invoke(
         self,
-        messages: Union[List[Dict[str, str]], List[BaseMessage]],
+        messages: Union[List[Dict[str, Any]], List[BaseMessage]],
         **kwargs: Any
     ) -> BaseMessage:
         """
@@ -136,7 +136,7 @@ class OpenRouterLLM(LLM):
 
     async def ainvoke(
         self,
-        messages: Union[List[Dict[str, str]], List[BaseMessage]],
+        messages: Union[List[Dict[str, Any]], List[BaseMessage]],
         **kwargs: Any
     ) -> BaseMessage:
         """

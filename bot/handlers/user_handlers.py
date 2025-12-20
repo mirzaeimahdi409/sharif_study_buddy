@@ -1,6 +1,7 @@
 """Handlers for regular user interactions."""
 import logging
 import time
+import base64
 from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes, ConversationHandler
@@ -79,22 +80,50 @@ async def reset_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
 
 
 async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle regular text messages from users."""
+    """Handle regular text messages and photos from users."""
     if not update.message:
         return
 
-    # Track received message
-    metrics.messages_received_total.labels(message_type='text').inc()
+    # Determine message type and extract content
+    image_data = None
+    user_text = ""
+    
+    if update.message.photo:
+        # Handle photo message
+        metrics.messages_received_total.labels(message_type='photo').inc()
+        
+        # Get the highest resolution photo
+        photo = update.message.photo[-1]
+        try:
+            # Download photo
+            file = await context.bot.get_file(photo.file_id)
+            byte_array = await file.download_as_bytearray()
+            
+            # Convert to base64
+            image_data = base64.b64encode(byte_array).decode('utf-8')
+            image_data = f"data:image/jpeg;base64,{image_data}"
+            
+            # Get caption if available
+            user_text = update.message.caption or ""
+            
+        except Exception as e:
+            logger.error(f"Error processing photo: {e}")
+            await update.message.reply_text("❌ خطا در پردازش تصویر.")
+            return
+    else:
+        # Handle regular text message
+        metrics.messages_received_total.labels(message_type='text').inc()
+        user_text = update.message.text or ""
 
     session = await get_profile_and_session(update)
-    user_text = update.message.text or ""
     user_id = update.effective_user.id if update.effective_user else "unknown"
 
     logger.info(
-        "Received message from user %s (session %s): %s",
+        "Received message from user %s (session %s): %s %s",
         user_id,
         session.id,
         (user_text[:100] + "...") if len(user_text) > 100 else user_text,
+        "(with image)" if image_data else ""
     )
     # Show "typing..." status in Telegram while we process the message
     if update.effective_chat:
@@ -106,7 +135,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     try:
         start_time = time.time()
-        answer, debug = await run_graph(session, user_text)
+        answer, debug = await run_graph(session, user_text, image_data=image_data)
         elapsed_time = time.time() - start_time
 
         # Track message processing duration

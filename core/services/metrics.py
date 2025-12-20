@@ -296,3 +296,4 @@ def detect_rag_context_relevance(context: str, answer: str) -> bool:
     # If sources were used, context was relevant
     return sources_used
 
+

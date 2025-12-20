@@ -147,7 +147,7 @@ class SharifBot:
         self.application.add_handler(
             CallbackQueryHandler(debug_callback_handler))
         self.application.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND,
+            MessageHandler((filters.TEXT | filters.PHOTO) & ~filters.COMMAND,
                            text_message_handler)
         )
 

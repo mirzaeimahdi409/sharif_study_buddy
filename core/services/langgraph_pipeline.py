@@ -28,6 +28,7 @@ MODEL = LLMConfig.get_model()
 class GraphState(TypedDict):
     """State dictionary for LangGraph pipeline."""
     question: str
+    image_data: Optional[str]
     history: List[Dict[str, str]]
     context: str
     answer: str
@@ -196,7 +197,19 @@ async def generate_node(state: GraphState) -> GraphState:
         "content": messages.SYSTEM_PROMPT + context_section
     })
     llm_messages.extend(state.get("history", []))
-    llm_messages.append({"role": "user", "content": state["question"]})
+    
+    # Handle multimodal input (image + text)
+    if state.get("image_data"):
+        user_content = [
+            {"type": "text", "text": state["question"]},
+            {
+                "type": "image_url",
+                "image_url": {"url": state["image_data"]}
+            }
+        ]
+        llm_messages.append({"role": "user", "content": user_content})
+    else:
+        llm_messages.append({"role": "user", "content": state["question"]})
     
     # Track LLM invocation
     llm_start_time = time.time()
@@ -341,11 +354,12 @@ def _convert_sources_to_html_links(answer: str, context: str) -> str:
     return answer
 
 
-async def run_graph(session: ChatSession, user_text: str) -> Tuple[str, Dict]:
+async def run_graph(session: ChatSession, user_text: str, image_data: Optional[str] = None) -> Tuple[str, Dict]:
     pipeline_start_time = time.time()
     await _save(session, "user", user_text)
     state: GraphState = {
         "question": user_text,
+        "image_data": image_data,
         "history": await _history(session),
         "context": "",
         "answer": "",

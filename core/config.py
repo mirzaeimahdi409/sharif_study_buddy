@@ -162,6 +162,11 @@ class ChatConfig:
         """Get RAG top K results."""
         return int(config("RAG_TOP_K", default="5"))
 
+    @staticmethod
+    def is_feedback_enabled() -> bool:
+        """Check if feedback loop is enabled."""
+        return config("ENABLE_FEEDBACK_LOOP", default=True, cast=bool)
+
 
 class LangSmithConfig:
     """LangSmith observability configuration."""

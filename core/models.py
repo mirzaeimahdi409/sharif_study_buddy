@@ -63,6 +63,9 @@ class ChatMessage(models.Model):
     role = models.CharField(max_length=16, choices=ROLE_CHOICES, db_index=True)
     content = models.TextField()
     tokens = models.IntegerField(blank=True, null=True)
+    feedback = models.IntegerField(
+        null=True, blank=True, choices=[(1, "Useful"), (-1, "Not Useful")]
+    )
     created_at = models.DateTimeField(default=timezone.now, db_index=True)
 
     def __str__(self) -> str:

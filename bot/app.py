@@ -51,7 +51,7 @@ from bot.handlers.user_handlers import (
     reset_handler,
     text_message_handler,
 )
-from bot.handlers.callback_handlers import debug_callback_handler
+from bot.handlers.callback_handlers import debug_callback_handler, feedback_callback_handler
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +168,9 @@ class SharifBot:
         self.application.add_handler(CommandHandler("start", start_handler))
         self.application.add_handler(CommandHandler("help", help_handler))
         self.application.add_handler(admin_conv)
+        self.application.add_handler(
+            CallbackQueryHandler(feedback_callback_handler, pattern="^fb:")
+        )
         self.application.add_handler(
             CallbackQueryHandler(debug_callback_handler))
         self.application.add_handler(

@@ -42,10 +42,11 @@ async def _history(session: ChatSession) -> List[Dict[str, str]]:
     return messages[-MAX_HISTORY:] if len(messages) > MAX_HISTORY else messages
 
 
-async def _save(session: ChatSession, role: str, content: str) -> None:
+async def _save(session: ChatSession, role: str, content: str) -> ChatMessage:
     msg = ChatMessage(session=session, role=role,
                       content=content, created_at=timezone.now())
     await sync_to_async(msg.save)()
+    return msg
 
 
 async def retrieve_node(state: GraphState) -> GraphState:
@@ -361,7 +362,7 @@ def _convert_sources_to_html_links(answer: str, context: str) -> str:
     return answer
 
 
-async def run_graph(session: ChatSession, user_text: str, image_data: Optional[str] = None) -> Tuple[str, Dict]:
+async def run_graph(session: ChatSession, user_text: str, image_data: Optional[str] = None) -> Tuple[str, Dict, ChatMessage]:
     pipeline_start_time = time.time()
     await _save(session, "user", user_text)
     state: GraphState = {
@@ -399,14 +400,14 @@ async def run_graph(session: ChatSession, user_text: str, image_data: Optional[s
         else:
             final: GraphState = await app.ainvoke(state)
         answer = final.get("answer", "")
-        await _save(session, "assistant", answer)
+        assistant_msg = await _save(session, "assistant", answer)
 
         # Track successful pipeline execution
         pipeline_duration = time.time() - pipeline_start_time
         metrics.pipeline_executions_total.labels(status='success').inc()
         metrics.pipeline_execution_duration_seconds.observe(pipeline_duration)
 
-        return answer, final.get("debug", {})
+        return answer, final.get("debug", {}), assistant_msg
     except RAGServiceError as e:
         pipeline_duration = time.time() - pipeline_start_time
         metrics.pipeline_executions_total.labels(status='error').inc()

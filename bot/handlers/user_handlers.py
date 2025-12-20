@@ -7,9 +7,11 @@ from telegram.constants import ChatAction
 from telegram.ext import ContextTypes, ConversationHandler
 
 from core.models import ChatSession
+from core.config import ChatConfig
 from core.services.langgraph_pipeline import run_graph
 from bot.utils import get_profile_and_session, format_answer_markdown_to_html
 from bot.constants import WELCOME, HELP_TEXT
+from bot.keyboards import feedback_keyboard
 from core.services import metrics
 
 logger = logging.getLogger(__name__)
@@ -135,7 +137,7 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
     try:
         start_time = time.time()
-        answer, debug = await run_graph(session, user_text, image_data=image_data)
+        answer, debug, assistant_msg = await run_graph(session, user_text, image_data=image_data)
         elapsed_time = time.time() - start_time
 
         # Track message processing duration
@@ -150,7 +152,12 @@ async def text_message_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             debug.get("rag", {}).get("retrieved_count", 0),
         )
         formatted = format_answer_markdown_to_html(answer)
-        await update.message.reply_text(formatted, parse_mode="HTML")
+        
+        reply_markup = None
+        if ChatConfig.is_feedback_enabled() and assistant_msg:
+            reply_markup = feedback_keyboard(assistant_msg.id)
+            
+        await update.message.reply_text(formatted, parse_mode="HTML", reply_markup=reply_markup)
 
         # Track sent message
         metrics.messages_sent_total.labels(message_type='text').inc()

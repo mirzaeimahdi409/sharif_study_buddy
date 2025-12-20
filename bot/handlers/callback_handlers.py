@@ -46,7 +46,6 @@ async def feedback_callback_handler(update: Update, context: ContextTypes.DEFAUL
     try:
         from core.models import ChatMessage
         from asgiref.sync import sync_to_async
-        from bot.keyboards import feedback_keyboard
         
         @sync_to_async
         def update_feedback(mid, val):
@@ -61,10 +60,8 @@ async def feedback_callback_handler(update: Update, context: ContextTypes.DEFAUL
         msg = await update_feedback(msg_id, feedback_value)
         
         if msg:
-            # Update keyboard to show selection
-            await query.edit_message_reply_markup(
-                reply_markup=feedback_keyboard(msg_id, current_feedback=feedback_value)
-            )
+            # Remove keyboard after feedback
+            await query.edit_message_reply_markup(reply_markup=None)
         else:
             logger.warning(f"ChatMessage {msg_id} not found for feedback.")
             

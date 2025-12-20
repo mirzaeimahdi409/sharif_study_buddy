@@ -85,29 +85,19 @@ def admin_broadcast_confirm_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(keyboard)
 
 
-def feedback_keyboard(message_id: int, current_feedback: int = 0) -> InlineKeyboardMarkup:
+def feedback_keyboard(message_id: int) -> InlineKeyboardMarkup:
     """
     Generate feedback keyboard.
-
+    
     Args:
         message_id: ChatMessage ID from database
-        current_feedback: 0 for none, 1 for useful, -1 for not useful
     """
-    # Define labels based on current state
-    like_text = "👍 مفید بود"
-    dislike_text = "👎 مفید نبود"
-
-    if current_feedback == 1:
-        like_text = "✅ مفید بود"
-    elif current_feedback == -1:
-        dislike_text = "✅ مفید نبود"
-
     keyboard = [
         [
             InlineKeyboardButton(
-                like_text, callback_data=f"fb:like:{message_id}"),
+                "👍 مفید بود", callback_data=f"fb:like:{message_id}"),
             InlineKeyboardButton(
-                dislike_text, callback_data=f"fb:dislike:{message_id}")
+                "👎 مفید نبود", callback_data=f"fb:dislike:{message_id}")
         ]
     ]
     return InlineKeyboardMarkup(keyboard)

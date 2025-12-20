@@ -22,15 +22,16 @@ async def debug_callback_handler(
 async def feedback_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle feedback (thumbs up/down) callback queries."""
     query = update.callback_query
-    await query.answer()
-
+    
     data = query.data
-    if not data.startswith("fb:"):
+    if not data or not data.startswith("fb:"):
+        await query.answer()
         return
 
     # fb:like:ID or fb:dislike:ID
     parts = data.split(":")
     if len(parts) != 3:
+        await query.answer()
         return
 
     action = parts[1]
@@ -38,6 +39,7 @@ async def feedback_callback_handler(update: Update, context: ContextTypes.DEFAUL
         msg_id = int(parts[2])
     except ValueError:
         logger.error(f"Invalid message ID in feedback: {parts[2]}")
+        await query.answer(text="❌ خطا در پردازش", show_alert=False)
         return
 
     feedback_value = 1 if action == "like" else -1
@@ -60,10 +62,16 @@ async def feedback_callback_handler(update: Update, context: ContextTypes.DEFAUL
         msg = await update_feedback(msg_id, feedback_value)
         
         if msg:
+            # Show toast notification
+            feedback_text = "بازخورد شما ثبت شد. ممنون! ❤️" if feedback_value == 1 else "بازخورد شما ثبت شد. بررسی می‌کنیم! 🙏"
+            await query.answer(text=feedback_text, show_alert=False)
+            
             # Remove keyboard after feedback
             await query.edit_message_reply_markup(reply_markup=None)
         else:
             logger.warning(f"ChatMessage {msg_id} not found for feedback.")
+            await query.answer(text="❌ پیام یافت نشد", show_alert=False)
             
     except Exception as e:
         logger.error(f"Error handling feedback: {e}")
+        await query.answer(text="❌ خطا در ثبت بازخورد", show_alert=False)

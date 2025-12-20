@@ -104,6 +104,19 @@ def ingest_message_to_kb(message: Message, channel_username: str):
     - microservice (optional): Microservice name for scoping
     - metadata (optional): Additional JSON metadata
     """
+    # Extract URLs from the original message text (before cleaning)
+    raw_text = message.text or ""
+    # Regex to find http/https URLs
+    found_urls = re.findall(r'(https?://[^\s]+)', raw_text)
+    urls_to_process = []
+    for url in found_urls:
+        # Simple cleanup of trailing punctuation often caught by regex
+        clean_url = url.rstrip('.,;:!?"\')>])')
+        # Skip Telegram links to avoid circular or useless ingestion
+        if "t.me/" not in clean_url and "telegram.me/" not in clean_url:
+            urls_to_process.append(clean_url)
+    urls_to_process = list(set(urls_to_process))
+
     message_link = f"https://t.me/{channel_username}/{message.id}"
     external_id = f"telegram:{channel_username}:{message.id}"
     content_hash = _content_hash(message.text or "")
@@ -180,6 +193,25 @@ def ingest_message_to_kb(message: Message, channel_username: str):
             channel_username,
             doc_id,
         )
+
+        # Process any URLs found in the message
+        for url in urls_to_process:
+            try:
+                logger.info(f"Processing URL extracted from message {message.id}: {url}")
+                url_res = client.ingest_url_sync(
+                    url_to_fetch=url,
+                    metadata={
+                        "source": "telegram_link",
+                        "original_channel": channel_username,
+                        "original_message_id": message.id,
+                        "original_message_url": message_link,
+                    }
+                )
+                url_doc_id = url_res.get("id") or url_res.get("document_id")
+                logger.info(f"Successfully ingested extracted URL {url} (doc_id={url_doc_id})")
+            except Exception as e:
+                # Log warning but don't fail the message ingestion
+                logger.warning(f"Failed to ingest extracted URL {url}: {e}")
 
         rec.ingested = True
         rec.ingested_at = timezone.now()

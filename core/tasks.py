@@ -219,7 +219,7 @@ def broadcast_message_task(message_text: str, segment: str = "all", days: int = 
 
     Args:
         message_text: Content of the message
-        segment: Target segment ("all", "new", "active")
+        segment: Target segment ("all", "new", "active", "inactive")
         days: Number of days for filter (if applicable)
 
     Returns:
@@ -237,6 +237,10 @@ def broadcast_message_task(message_text: str, segment: str = "all", days: int = 
     elif segment == "active" and days > 0:
         cutoff = timezone.now() - timedelta(days=days)
         users = users.filter(sessions__updated_at__gte=cutoff).distinct()
+    elif segment == "inactive" and days > 0:
+        cutoff = timezone.now() - timedelta(days=days)
+        # Users who do NOT have any session updated since cutoff
+        users = users.exclude(sessions__updated_at__gte=cutoff)
 
     user_ids = list(users.values_list("telegram_id", flat=True))
     total_users = len(user_ids)
@@ -267,14 +271,9 @@ def broadcast_message_task(message_text: str, segment: str = "all", days: int = 
 
         if loop and loop.is_running():
             # If loop is running, we can't use run_until_complete easily without nesting issues
-            # But usually Celery tasks are not async unless configured so.
-            # If we are here, likely no loop is running or we are in a sync worker.
-            # However, if we are in an async context, we should use create_task, but shared_task is sync wrapper.
-            # Let's try asyncio.run() which creates a new loop.
             pass
 
         # Use asyncio.run() which handles loop creation/cleanup
-        # Note: This will raise RuntimeError if a loop is already running in the thread.
         try:
             success, failed = asyncio.run(_send_all())
         except RuntimeError:

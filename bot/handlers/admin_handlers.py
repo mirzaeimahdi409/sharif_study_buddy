@@ -6,7 +6,7 @@ from datetime import timedelta
 
 from asgiref.sync import sync_to_async
 from django.utils import timezone
-from django.db.models import Count
+from django.db.models import Count, Max, Q
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
@@ -223,6 +223,14 @@ async def admin_broadcast_menu_handler(
         )
         return ADMIN_BROADCAST_FILTER_INPUT
 
+    if data == "admin:broadcast:inactive":
+        context.user_data["broadcast_segment"] = "inactive"
+        await query.edit_message_text(
+            "🕒 تعداد روزهای گذشته را وارد کنید:\n"
+            "(کاربرانی که در این تعداد روز اخیر فعالیت نداشته‌اند)"
+        )
+        return ADMIN_BROADCAST_FILTER_INPUT
+
     return ADMIN_BROADCAST_MENU
 
 
@@ -243,7 +251,13 @@ async def admin_broadcast_filter_handler(
 
     context.user_data["broadcast_days"] = days
     segment = context.user_data.get("broadcast_segment")
-    segment_text = "جدید" if segment == "new" else "فعال"
+    
+    segment_map = {
+        "new": "جدید",
+        "active": "فعال",
+        "inactive": "غیرفعال"
+    }
+    segment_text = segment_map.get(segment, "انتخاب شده")
 
     await update.message.reply_text(
         f"✍️ لطفاً متن پیام خود را برای کاربران {segment_text} (در {days} روز اخیر) ارسال کنید:"
@@ -276,10 +290,19 @@ async def admin_broadcast_message_handler(
         count = await sync_to_async(UserProfile.objects.filter(created_at__gte=cutoff).count)()
     elif segment == "active":
         cutoff = timezone.now() - timedelta(days=days)
-        # Users with sessions or messages in the last N days
-        # We can use ChatSession.updated_at
+        # Users with sessions updated in the last N days
         count = await sync_to_async(
             UserProfile.objects.filter(sessions__updated_at__gte=cutoff).distinct().count
+        )()
+    elif segment == "inactive":
+        cutoff = timezone.now() - timedelta(days=days)
+        # Users with NO sessions updated in the last N days
+        # This includes users with sessions older than cutoff AND users with no sessions at all
+        # To be precise: users where MAX(sessions__updated_at) < cutoff OR sessions is null
+        
+        # We can use exclude(sessions__updated_at__gte=cutoff)
+        count = await sync_to_async(
+            UserProfile.objects.exclude(sessions__updated_at__gte=cutoff).count
         )()
 
     context.user_data["broadcast_count"] = count

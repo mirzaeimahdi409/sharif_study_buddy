@@ -67,6 +67,8 @@ def admin_broadcast_keyboard() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(
             "💬 کاربران فعال (فیلتر روز)", callback_data="admin:broadcast:active")],
         [InlineKeyboardButton(
+            "💤 کاربران غیرفعال (فیلتر روز)", callback_data="admin:broadcast:inactive")],
+        [InlineKeyboardButton(
             "⬅️ بازگشت", callback_data="admin:back_main")],
     ]
     return InlineKeyboardMarkup(keyboard)

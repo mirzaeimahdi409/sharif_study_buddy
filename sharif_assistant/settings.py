@@ -205,13 +205,12 @@ CACHES = {
 }
 
 # Celery Configuration
-# RabbitMQ Connection String: amqp://user:password@host:port/vhost
 CELERY_BROKER_URL = config(
-    "CELERY_BROKER_URL", default="amqp://guest:guest@rabbitmq:5672//"
+    "CELERY_BROKER_URL", default=_redis_url(REDIS_DB + 1)
 )
-# Use RabbitMQ (RPC) for results as well, removing Redis dependency for Celery
-CELERY_RESULT_BACKEND = "rpc://"
-
+CELERY_RESULT_BACKEND = config(
+    "CELERY_RESULT_BACKEND", default=_redis_url(REDIS_DB + 1)
+)
 CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
@@ -219,12 +218,6 @@ CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 30 * 60  # 30 minutes
 CELERY_TASK_SOFT_TIME_LIMIT = 25 * 60  # 25 minutes
-
-# Optimization for Replicas / Multiple Workers
-# Fair dispatch: one task at a time per worker process
-CELERY_WORKER_PREFETCH_MULTIPLIER = 1
-# Task is only acknowledged after success (reliability)
-CELERY_TASK_ACKS_LATE = True
 
 # Celery Beat Schedule
 CELERY_BEAT_SCHEDULE = {

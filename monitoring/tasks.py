@@ -91,18 +91,32 @@ def _clean_message_text(raw: str) -> str:
     return text.strip()
 
 
-def ingest_message_to_kb(message: Message, channel_username: str):
+# --- Async DB Helpers ---
+
+@sync_to_async
+def db_get_or_create_message(external_id, defaults):
+    return IngestedTelegramMessage.objects.get_or_create(
+        external_id=external_id,
+        defaults=defaults
+    )
+
+
+@sync_to_async
+def db_check_duplicate_content(content_hash, external_id):
+    return IngestedTelegramMessage.objects.filter(
+        content_hash=content_hash, ingested=True
+    ).exclude(external_id=external_id).exists()
+
+
+@sync_to_async
+def db_save_record(record, update_fields):
+    record.save(update_fields=update_fields)
+
+
+async def ingest_message_to_kb_async(message: Message, channel_username: str):
     """
     Constructs and sends the message to the knowledge base API.
-
-    Uses the /api/knowledge/documents/ingest-channel-message/ endpoint which accepts:
-    - title (required): Title for the message document
-    - text_content (required): The full text content of the message
-    - published_at (required): The original publication timestamp (ISO 8601 format)
-    - source_url (required): A direct URL to the original message for citation
-    - user_id (required): Owner user ID for access control
-    - microservice (optional): Microservice name for scoping
-    - metadata (optional): Additional JSON metadata
+    Async version to avoid event loop conflicts when using RAGClient.
     """
     # Extract URLs from the original message text (before cleaning)
     raw_text = message.text or ""
@@ -111,7 +125,8 @@ def ingest_message_to_kb(message: Message, channel_username: str):
     urls_to_process = []
     for url in found_urls:
         # Simple cleanup of trailing punctuation often caught by regex
-        clean_url = url.rstrip('.,;:!?"\')>])')
+        # Added | and () to the list of chars to strip
+        clean_url = url.rstrip('.,;:!?"\')>])|')
         # Skip Telegram links to avoid circular or useless ingestion
         if "t.me/" not in clean_url and "telegram.me/" not in clean_url:
             urls_to_process.append(clean_url)
@@ -122,10 +137,7 @@ def ingest_message_to_kb(message: Message, channel_username: str):
     content_hash = _content_hash(message.text or "")
 
     # ---- Deduplication guard ----
-    # 1) Strong dedupe by external_id (channel + message_id)
-    # 2) Optional content-based dedupe (same normalized text) across all channels
-    #    Enable by setting TELEGRAM_DEDUP_BY_CONTENT=1 in env.
-    rec, created = IngestedTelegramMessage.objects.get_or_create(
+    rec, created = await db_get_or_create_message(
         external_id=external_id,
         defaults={
             "channel_username": channel_username,
@@ -141,15 +153,13 @@ def ingest_message_to_kb(message: Message, channel_username: str):
 
     dedup_by_content = TelegramConfig.get_dedup_by_content()
     if dedup_by_content:
-        if IngestedTelegramMessage.objects.filter(
-            content_hash=content_hash, ingested=True
-        ).exclude(external_id=external_id).exists():
+        is_duplicate = await db_check_duplicate_content(content_hash, external_id)
+        if is_duplicate:
             # Mark as "ingested" to avoid rechecking every run, but keep note.
             rec.ingested = True
             rec.ingested_at = timezone.now()
             rec.last_error = "Skipped due to duplicate content hash."
-            rec.save(update_fields=["ingested",
-                     "ingested_at", "last_error", "updated_at"])
+            await db_save_record(rec, update_fields=["ingested", "ingested_at", "last_error", "updated_at"])
             return
 
     # Clean text before sending to RAG
@@ -160,18 +170,17 @@ def ingest_message_to_kb(message: Message, channel_username: str):
     if len(cleaned_text) > 100:
         title += "..."
 
+    # Use RAGClient for ingestion
+    client = RAGClient()
     try:
         # Update attempt tracking
         rec.attempts = (rec.attempts or 0) + 1
         rec.last_attempt_at = timezone.now()
         rec.source_url = message_link
         rec.content_hash = content_hash
-        rec.save(update_fields=["attempts", "last_attempt_at",
-                 "source_url", "content_hash", "updated_at"])
+        await db_save_record(rec, update_fields=["attempts", "last_attempt_at", "source_url", "content_hash", "updated_at"])
 
-        # Use RAGClient for ingestion
-        client = RAGClient()
-        result = client.ingest_channel_message_sync(
+        result = await client.ingest_channel_message(
             title=title,
             text_content=cleaned_text,
             published_at=message.date.isoformat(),
@@ -197,8 +206,9 @@ def ingest_message_to_kb(message: Message, channel_username: str):
         # Process any URLs found in the message
         for url in urls_to_process:
             try:
-                logger.info(f"Processing URL extracted from message {message.id}: {url}")
-                url_res = client.ingest_url_sync(
+                logger.info(
+                    f"Processing URL extracted from message {message.id}: {url}")
+                url_res = await client.ingest_url(
                     url_to_fetch=url,
                     metadata={
                         "source": "telegram_link",
@@ -208,7 +218,8 @@ def ingest_message_to_kb(message: Message, channel_username: str):
                     }
                 )
                 url_doc_id = url_res.get("id") or url_res.get("document_id")
-                logger.info(f"Successfully ingested extracted URL {url} (doc_id={url_doc_id})")
+                logger.info(
+                    f"Successfully ingested extracted URL {url} (doc_id={url_doc_id})")
             except Exception as e:
                 # Log warning but don't fail the message ingestion
                 logger.warning(f"Failed to ingest extracted URL {url}: {e}")
@@ -218,15 +229,15 @@ def ingest_message_to_kb(message: Message, channel_username: str):
         rec.last_error = None
         if doc_id:
             rec.rag_document_id = str(doc_id)
-        rec.save(
-            update_fields=[
-                "ingested",
-                "ingested_at",
-                "last_error",
-                "rag_document_id",
-                "updated_at",
-            ]
-        )
+
+        await db_save_record(rec, update_fields=[
+            "ingested",
+            "ingested_at",
+            "last_error",
+            "rag_document_id",
+            "updated_at",
+        ])
+
     except RAGServiceError as e:
         error_msg = str(e)
         logger.error(
@@ -236,7 +247,7 @@ def ingest_message_to_kb(message: Message, channel_username: str):
             error_msg,
         )
         rec.last_error = error_msg
-        rec.save(update_fields=["last_error", "updated_at"])
+        await db_save_record(rec, update_fields=["last_error", "updated_at"])
     except Exception as e:
         error_msg = f"Unexpected error: {str(e)}"
         logger.exception(
@@ -246,7 +257,9 @@ def ingest_message_to_kb(message: Message, channel_username: str):
             error_msg,
         )
         rec.last_error = error_msg
-        rec.save(update_fields=["last_error", "updated_at"])
+        await db_save_record(rec, update_fields=["last_error", "updated_at"])
+    finally:
+        await client.close()
 
 # --- Main Celery Task ---
 
@@ -261,11 +274,8 @@ async def _harvest_channel_async(client, channel: MonitoredChannel):
     try:
         async for message in client.iter_messages(channel_username, limit=limit):
             if is_message_relevant(message):
-                # Run Django/requests-based ingestion in a sync thread
-                await sync_to_async(
-                    ingest_message_to_kb,
-                    thread_sensitive=True,
-                )(message, channel_username)
+                # Run ingestion logic asynchronously
+                await ingest_message_to_kb_async(message, channel_username)
     except Exception as e:
         print(f"Could not process channel {channel_username}: {e}")
 

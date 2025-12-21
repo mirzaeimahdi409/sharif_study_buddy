@@ -50,9 +50,22 @@ async def main():
     print(f"\nUsing API ID: {api_id}")
     print(f"Session path: {session_path}\n")
 
-    client = TelegramClient(session_path, api_id, api_hash)
+    from telethon.sessions import StringSession
 
     # Start the client interactively
+    # We use StringSession to generate a session string that can be used in env vars
+    # This avoids SQLite locking issues in Docker/Celery
+    
+    print("Choose session type:")
+    print("1. File-based (default, saves to sessions/telegram_session.session)")
+    print("2. String-based (outputs a string to put in TELEGRAM_SESSION_STRING env var)")
+    choice = input("Enter 1 or 2 [default: 1]: ").strip()
+
+    if choice == "2":
+        client = TelegramClient(StringSession(), api_id, api_hash)
+    else:
+        client = TelegramClient(session_path, api_id, api_hash)
+
     # This will prompt for phone number and login code
     await client.start()
 
@@ -64,8 +77,20 @@ async def main():
     print(f"Logged in as: {me.first_name} {me.last_name or ''}")
     print(f"Username: @{me.username}" if me.username else "No username")
     print(f"Phone: {me.phone}\n")
-    print(f"Session file saved at: {session_path}.session")
-    print("You can now restart your Celery worker and it will use this session.")
+
+    if choice == "2":
+        session_string = client.session.save()
+        print("STRING SESSION GENERATED:")
+        print("-" * 60)
+        print(session_string)
+        print("-" * 60)
+        print("PLEASE COPY THE ABOVE STRING AND ADD IT TO YOUR .env FILE AS:")
+        print(f"TELEGRAM_SESSION_STRING={session_string}")
+        print("This is recommended for Docker/Celery environments to avoid database locks.")
+    else:
+        print(f"Session file saved at: {session_path}.session")
+        print("You can now restart your Celery worker and it will use this session.")
+    
     print("=" * 60)
 
     await client.disconnect()

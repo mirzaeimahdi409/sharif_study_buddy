@@ -42,6 +42,13 @@ class TelegramConfig:
         )
 
     @staticmethod
+    def get_session_string() -> Optional[str]:
+        """Get Telegram session string (for StringSession)."""
+        return getattr(settings, "TELEGRAM_SESSION_STRING", None) or config(
+            "TELEGRAM_SESSION_STRING", default=None
+        )
+
+    @staticmethod
     def get_admin_ids() -> Set[str]:
         """Get admin Telegram IDs."""
         raw = getattr(settings, "ADMIN_TELEGRAM_IDS", None) or config(

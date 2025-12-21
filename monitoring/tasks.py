@@ -292,20 +292,27 @@ def harvest_channels_task():
     # Get Telegram credentials from config
     api_id = TelegramConfig.get_api_id()
     api_hash = TelegramConfig.get_api_hash()
+    session_string = TelegramConfig.get_session_string()
 
     if not api_id or not api_hash:
         print("❌ TELEGRAM_API_ID / TELEGRAM_API_HASH are not configured. Exiting.")
         return
 
-    # Session file path (must match create_telegram_session.py)
+    # Initialize Telegram Client
+    from telethon.sessions import StringSession
     import os
-    session_path = os.path.join(os.path.dirname(
-        __file__), '..', 'sessions', 'telegram_session')
 
-    # Create the Telegram client as in the official docs:
-    #   client = TelegramClient('session_name', api_id, api_hash)
-    # See: https://docs.telethon.dev/en/stable/basic/quick-start.html
-    client = TelegramClient(session_path, api_id, api_hash)
+    if session_string:
+        # Use StringSession if available (avoids SQLite locking issues in containers)
+        # print("Using StringSession for Telegram client.")
+        client = TelegramClient(StringSession(
+            session_string), api_id, api_hash)
+    else:
+        # Fallback to SQLite session file
+        session_path = os.path.join(os.path.dirname(
+            __file__), '..', 'sessions', 'telegram_session')
+        # print(f"Using SQLite session file: {session_path}")
+        client = TelegramClient(session_path, api_id, api_hash)
 
     async def main():
         """

@@ -448,11 +448,18 @@ class RAGClient:
         """
         url = f"{self.base_url}/knowledge/documents/{doc_id}/"
 
+        # Attach user_id and microservice for RAG API audit fields
+        params: Dict[str, Any] = {}
+        if self.default_user_id:
+            params["user_id"] = str(self.default_user_id)
+        if self.microservice:
+            params["microservice"] = self.microservice
+
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"RAG delete document: {doc_id}")
+            logger.debug(f"RAG delete document: {doc_id} with params {params}")
 
         try:
-            resp = await self._client.delete(url, headers=self._headers())
+            resp = await self._client.delete(url, headers=self._headers(), params=params)
             # Treat 404 as a successful "already deleted" case
             if resp.status_code == 404:
                 logger.info(

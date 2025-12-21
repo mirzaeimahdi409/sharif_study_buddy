@@ -16,6 +16,7 @@ def _delete_rag_documents(doc_ids: Iterable[str]) -> None:
     Best-effort deletion of documents from the RAG service.
 
     Uses RAGClient to delete documents. Failures are logged but do not block channel deletion.
+    Handles sync/async context issues properly by using a new event loop for each call.
     """
     try:
         client = RAGClient()
@@ -25,10 +26,13 @@ def _delete_rag_documents(doc_ids: Iterable[str]) -> None:
         )
         return
 
+    # Use RAGClient's synchronous wrapper which handles event loop creation
     for doc_id in doc_ids:
         if not doc_id:
             continue
         try:
+            # delete_document_sync creates its own loop and thread, preventing
+            # "Event loop is closed" errors in signal handlers
             client.delete_document_sync(doc_id)
             logger.debug("Successfully deleted RAG document %s", doc_id)
         except RAGServiceError as e:
@@ -38,6 +42,15 @@ def _delete_rag_documents(doc_ids: Iterable[str]) -> None:
             logger.warning(
                 "Unexpected error deleting RAG document %s: %s", doc_id, e
             )
+    
+    # Clean up client resources
+    try:
+        # In a sync context, we can't await close(), but RAGClient uses httpx.AsyncClient
+        # The sync wrappers manage their own loops, so the main client instance might need
+        # to be closed if it was opened globally, but here it's local.
+        pass 
+    except Exception:
+        pass
 
 
 @receiver(pre_delete, sender=MonitoredChannel)

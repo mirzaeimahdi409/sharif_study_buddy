@@ -56,8 +56,13 @@ async def retrieve_node(state: GraphState) -> GraphState:
     try:
         # user_id is handled inside RAGClient (default fixed ID for now)
         res = await rag.search(query=state["question"], top_k=TOP_K)
+
+        # Ensure we populate debug info correctly
+        # API might return 'results', 'result', or 'data'
+        items = res.get("results") or res.get(
+            "result") or res.get("data") or []
+        res["retrieved_count"] = len(items)
         debug["rag"] = res
-        items = res.get("results") or res.get("data") or []
 
         # --- Logging of retrieved RAG contents for debugging ---
         if logger.isEnabledFor(logging.INFO):
@@ -68,7 +73,21 @@ async def retrieve_node(state: GraphState) -> GraphState:
             )
 
         for idx, it in enumerate(items[:TOP_K], 1):
-            text = it.get("text") or it.get("chunk") or it.get("content") or ""
+            # Try multiple common field names for document text
+            text = (
+                it.get("text")
+                or it.get("chunk")
+                or it.get("content")
+                or it.get("text_content")
+                or it.get("page_content")
+                or ""
+            )
+
+            # Debug: If text is missing, log the keys to help identify the correct field
+            if not text and logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "RAG item %d missing text. Available keys: %s", idx, list(it.keys()))
+
             if not text.strip():
                 continue
 

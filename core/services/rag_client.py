@@ -156,7 +156,8 @@ class RAGClient:
             metrics.rag_search_duration_seconds.observe(search_duration)
 
             # Get result count
-            items = result.get("results") or result.get("data") or []
+            items = result.get("results") or result.get(
+                "result") or result.get("data") or []
             result_count = len(items)
 
             # Track metrics

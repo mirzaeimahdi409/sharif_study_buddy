@@ -207,7 +207,7 @@ CACHES = {
 # Celery Configuration
 # RabbitMQ Connection String: amqp://user:password@host:port/vhost
 CELERY_BROKER_URL = config(
-    "CELERY_BROKER_URL", default="amqp://guest:guest@rabbitmq:5672//"
+    "CELERY_BROKER_URL", default="None"
 )
 # Use RabbitMQ (RPC) for results as well, removing Redis dependency for Celery
 CELERY_RESULT_BACKEND = "rpc://"

@@ -55,7 +55,7 @@ async def main():
     # Start the client interactively
     # We use StringSession to generate a session string that can be used in env vars
     # This avoids SQLite locking issues in Docker/Celery
-    
+
     print("Choose session type:")
     print("1. File-based (default, saves to sessions/telegram_session.session)")
     print("2. String-based (outputs a string to put in TELEGRAM_SESSION_STRING env var)")
@@ -90,7 +90,7 @@ async def main():
     else:
         print(f"Session file saved at: {session_path}.session")
         print("You can now restart your Celery worker and it will use this session.")
-    
+
     print("=" * 60)
 
     await client.disconnect()
